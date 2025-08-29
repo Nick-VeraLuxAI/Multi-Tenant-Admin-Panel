@@ -1,0 +1,1 @@
+http://localhost:3000/portal?tenant=alexandracohomes&key=dev-shared-key

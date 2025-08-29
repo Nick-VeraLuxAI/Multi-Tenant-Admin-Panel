@@ -1,0 +1,29 @@
+{
+  "brandName": "Alexandra Co Homes",
+  "portalLabel": "Client Portal",                 
+  "titleTemplate": "{{brand}} · {{portal}}",      
+  "footerText": "© 2025 VeraLux AI · All Rights Reserved",
+  "logo": "/static/brand/eralux (100 x 98 px).png",
+  "favicon": "/static/brand/favicon.png",
+  "gradientAngle": 135,
+"colors": {
+  "bg": "#F4F4F2",       
+  "bg2": "#CBB292",    
+  "bg3": "#7A5C42",     
+  "card": "#2F2F2F",    
+  "text": "#F5F5F5",     
+  "muted": "#8C8C8C",   
+  "accent": "#A65A2E",   
+  "good": "#2ECC71",    
+  "warn": "#E2B84D",    
+  "bad": "#D94F4F",      
+  "border": "#D6D6D6"  
+}
+,
+  "features": {
+    "usage": true,
+    "errors": true,
+    "events": true,
+    "premium": true
+  }
+}

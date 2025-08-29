@@ -1,0 +1,17 @@
+{
+  "name": "admin-panel",
+  "version": "1.0.0",
+  "description": "To Run: mkdir -p views # save the HTML above as views/portal.html # save server.js at project root",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0"
+  }
+}

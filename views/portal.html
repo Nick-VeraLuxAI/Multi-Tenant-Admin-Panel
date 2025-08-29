@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Loading…</title>
+<style>
+  :root{
+    /* Safe defaults; overridden by config */
+    --bg:#2E7D5B; --bg2:#C9A227; --card:#16412e; --text:#e9ecf1; --muted:#a6accd;
+    --accent:#444C56; --good:#2ecc71; --warn:#f1c40f; --bad:#e74c3c; --border:#C9A227;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));color:var(--text);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  header{position:sticky;top:0;background:#0d1020cc;backdrop-filter:saturate(150%) blur(10px);border-bottom:1px solid var(--border);padding:12px 20px}
+  header .brand{display:flex;gap:10px;align-items:center;font-weight:700;letter-spacing:.3px}
+  header .brand img{height:22px}
+  main{padding:24px;max-width:1200px;margin:0 auto}
+  .grid{display:grid;gap:16px}
+  .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .card.section .card.section {
+    margin-top: 12px;  /* space between nested cards */
+  }
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 30px #0006}
+  .card h3{margin:0 0 8px 0;font-size:14px;color:var(--muted)}
+  .charts {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  @media (max-width: 900px) {
+    .charts {
+      grid-template-columns: 1fr; /* fallback to stacked on small screens */
+    }
+  }
+
+  .kpi{padding:16px}
+  .kpi .value{font-size:28px;font-weight:800}
+  .good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  .section{padding:16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;text-align:left}
+  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+  .split{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+  canvas{width:100%;height:160px}
+  @media (max-width:900px){ .cards{grid-template-columns:repeat(2,minmax(0,1fr))} .split{grid-template-columns:1fr} }
+  @media (max-width:520px){ .cards{grid-template-columns:1fr} }
+  #forecastSparkline {
+    width: 100%;
+    height: 60px !important;  /* keep it short */
+    max-height: 60px;
+  }
+  #metrics-log-card {
+  max-height: 200px;       /* keeps the card from growing forever */
+  overflow-y: auto;        /* adds a scroll bar if too tall */
+  }
+  #metrics-log-card h3 {
+  position: sticky;      /* ✅ sticks the header */
+  top: 0;
+  background: var(--card); /* match card bg so it doesn’t overlap text */
+  padding: 8px 0;
+  z-index: 1;
+}
+
+  #metrics-log {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    word-wrap: break-word;   /* breaks long words */
+    white-space: normal;     /* allows wrapping */
+  }
+
+  #metrics-log li {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--border);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  /* 🔹 Scrollable X-axis */
+  .chart-scroll {
+    overflow-x: auto;     /* allows horizontal scroll */
+    overflow-y: hidden;
+    width: 100%;
+  }
+
+  /* 🔹 Force chart wider than container */
+  .chart-scroll canvas {
+    min-width: 900px;     /* adjust based on how many points */
+    height: 300px;        /* keep consistent height */
+  }
+
+  
+  
+
+
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img id="brand-logo" alt="" style="display:none">
+    <span id="brand-text"></span>
+  </div>
+</header>
+
+<main class="grid">
+  <div id="premium-sections" style="display:none" data-tenant="" data-key=""></div>
+
+  <!-- Usage Visuals -->
+  <section class ="grid charts">
+    <div class="card section">
+      <h3>Token Breakdown</h3>
+      <canvas id="tokenBreakdownChart"></canvas>
+    </div>
+
+    <div class="card section">
+      <h3>Cost Breakdown</h3>
+      <canvas id="costBreakdownChart"></canvas>
+    </div>
+
+    <div class="card section">
+      <h3>Forecast</h3>
+      <div class="card section"><h3>Projected Monthly Cost</h3><div id="forecastText" class="value mono">—</div>
+      <canvas id="forecastSparkline"></canvas>
+      </div>
+      
+        <div class="card section" id="usage-card"><h3>Usage</h3>
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px">
+            <div>Period</div><div id="u-period" class="mono" style="text-align:right">—</div>
+            <div>Tokens</div><div id="u-tokens" class="mono" style="text-align:right">—</div>
+            <div>Cost</div><div id="u-cost" class="mono" style="text-align:right">—</div>
+          </div>
+        </div>
+    </div>  
+  </section>
+
+  <div class="card section" id="conversationHistogramCard">
+    <h3>Usage by Time of Day</h3>
+    <canvas id="conversationHistogram"></canvas>
+  </div>
+
+
+
+  <!-- KPIs -->
+  <section class="grid cards">
+    <div class="card kpi"><h3>Status</h3><div id="kpi-status" class="value">—</div></div>
+    <div class="card kpi"><h3>Requests (Today)</h3><div id="kpi-req" class="value">0</div></div>
+    <div class="card kpi"><h3>Success Rate</h3><div id="kpi-sr" class="value">0%</div></div>
+    <div class="card kpi"><h3>Avg Latency</h3><div id="kpi-lat" class="value">0ms</div></div>
+  </section>
+
+  <!-- Chart + Uptime/Usage -->
+<section class="split">
+  <div class="card section">
+    <h3>Requests (last minute)</h3>
+    <canvas id="spark"></canvas>
+  </div>
+
+  <!-- Remove the extra grid wrapper -->
+  <section class="grid two-col">
+    <div class="card section">
+      <h3>Uptime</h3>
+      <div id="uptime" class="value mono">—</div>
+      <div id="health" style="color:var(--muted)">Checking…</div>
+    </div>
+
+    <div class="card section" id="metrics-log-card">
+      <h3>Metrics Log</h3>
+      <ul id="metrics-log"></ul>
+    </div>
+  </section>
+</section>
+
+  <!-- Errors -->
+  <section class="card section" id="errors-card">
+    <h3>Recent Errors</h3>
+    <table>
+      <thead><tr><th>Time</th><th>Message</th></tr></thead>
+      <tbody id="errors-tbody"><tr><td colspan="2" style="color:var(--muted)">No errors</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- Events -->
+  <section class="card section" id="events-card">
+    <h3>Recent Events</h3>
+    <ul id="events-list"></ul>
+  </section>
+</main>
+
+
+<footer style="padding:12px 20px;color:var(--muted)">
+  <span id="brand-footer"></span>
+</footer>
+<script>
+(async function loadPremiumModule() {
+  try {
+    const p = new URLSearchParams(location.search);
+    const tenant = (p.get('tenant') || 'default').toLowerCase();
+
+    const res = await fetch(`/static/config.${tenant}.json?v=${Date.now()}`);
+    if (!res.ok) return;
+    const cfg = await res.json();
+
+    if (cfg.features?.premium) {
+      const el = document.getElementById("premium-sections");
+      if (el) {
+        el.dataset.tenant = tenant;
+        el.dataset.key = cfg.publicKey || (p.get('key') || '');
+        el.style.display = "";
+      }
+      const s = document.createElement("script");
+      s.src = "/static/premium.js?v=" + Date.now();
+      document.body.appendChild(s);
+    }
+  } catch (e) {
+    console.warn("Premium loader failed:", e.message);
+  }
+})();
+</script>
+
+
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = ts => new Date(ts).toLocaleString();
+const esc = s => String(s ?? '')
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  .replace(/'/g,'&#39;');
+
+// ── Multi-tenant: get tenant/key from query (?tenant=solomon&key=abc)
+const qs = new URLSearchParams(location.search);
+const TENANT = (qs.get('tenant') || 'default').toLowerCase();
+const KEY    = qs.get('key') || '';
+
+// Helper: call APIs
+function api(path, opts = {}) {
+  const url = new URL(path, location.origin);
+  url.searchParams.set('tenant', TENANT);
+  if (KEY) url.searchParams.set('key', KEY);
+  return fetch(url, opts);
+}
+
+// -------------- Brand loader (config.json) --------------
+async function loadConfig(){
+  try{
+    let res = await fetch(`/static/config.${TENANT}.json?v=${Date.now()}`);
+    if (!res.ok) res = await fetch(`/static/config.json?v=${Date.now()}`);
+    if (!res.ok) throw new Error('config not found');
+    const cfg = await res.json();
+
+    const name   = cfg.brandName || 'Brand';
+    const portal = cfg.portalLabel || 'Portal';
+    const templ  = cfg.titleTemplate || '{{brand}} · {{portal}}';
+    const render = s => s.replaceAll('{{brand}}', name).replaceAll('{{portal}}', portal);
+
+    document.title = render(templ);
+    $('brand-text').textContent = render(templ);
+
+    const footerEl = document.getElementById('brand-footer');
+    if (footerEl) footerEl.textContent = cfg.footerText || render(templ);
+
+    if (cfg.logo) {
+      const img = $('brand-logo');
+      img.src = cfg.logo;
+      img.style.display = '';
+      img.alt = name;
+    }
+
+    if (cfg.favicon){
+      const link = document.querySelector('link[rel="icon"]') || document.createElement('link');
+      link.rel = 'icon'; link.href = cfg.favicon;
+      document.head.appendChild(link);
+    }
+
+    const c = cfg.colors || {};
+    const set = (k,v)=> v!=null && document.documentElement.style.setProperty('--'+k, v);
+    set('bg', c.bg); set('bg2', c.bg2); set('card', c.card); set('text', c.text);
+    set('muted', c.muted); set('accent', c.accent); set('good', c.good);
+    set('warn', c.warn); set('bad', c.bad); set('border', c.border);
+
+    const angle = Number(cfg.gradientAngle) || 135;
+    document.body.style.background = `linear-gradient(${angle}deg, var(--bg), var(--bg2))`;
+
+    const feat = cfg.features || {};
+    if (feat.usage === false)  $('usage-card').style.display = 'none';
+    if (feat.errors === false) $('errors-card').style.display = 'none';
+    if (feat.events === false) $('events-card').style.display = 'none';
+
+  }catch(e){
+    console.warn('Using default branding; unable to load config:', e.message);
+  }
+}
+
+// -------------- Tiny sparkline --------------
+const spark = document.getElementById('spark');
+const ctx = spark.getContext('2d');
+let series = Array.from({length:60}, ()=>0);
+function drawSpark(){
+  const w=spark.clientWidth||300, h=spark.clientHeight||160;
+  spark.width=w*2; spark.height=h*2; ctx.setTransform(2,0,0,2,0,0);
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#6ea8fe';
+  ctx.lineWidth=2; ctx.beginPath();
+  const max = Math.max(1, ...series);
+  series.forEach((v,i)=> {
+    const x = (i/(series.length-1))*w;
+    const y = h - (v/max)*h;
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.stroke();
+}
+
+// ---------- Event formatter ----------
+function formatEvent(ev){
+  const role = (ev.role || '').toString();
+  const color = role === "user" ? "var(--good)" : role === "ai" ? "var(--accent)" : "var(--muted)";
+  return `
+    <li style="margin:4px 0;">
+      <span style="font-weight:bold;color:${color}">[${esc(role.toUpperCase())}]</span>
+      <span style="color:${color};opacity:0.8"> ${fmt(ev.at)}</span>
+      <div style="margin-left:12px;color:${color};font-family:ui-monospace;">
+        ${esc(ev.message)}
+      </div>
+    </li>`;
+}
+
+// -------------- Data loader --------------
+async function loadData(){
+  const [m, errs, evs, health] = await Promise.all([
+    api('/api/portal/metrics').then(r=>r.json()),
+    api('/api/portal/errors').then(r=>r.json()),
+    api('/api/portal/events').then(r=>r.json()),
+    api('/api/portal/health').then(r=>r.json()).catch(()=>({ok:false}))
+  ]);
+
+  const status = (m.status||'ok').toUpperCase();
+  const color = status==='OK'?'good':(status==='DEGRADED'?'warn':'bad');
+  $('kpi-status').textContent = status;
+  $('kpi-status').className = 'value '+color;
+
+  $('kpi-req').textContent = m.requestsToday ?? 0;
+  $('kpi-sr').textContent  = (m.successRate ?? 0) + '%';
+  $('kpi-lat').textContent = (m.avgLatencyMs ?? 0) + 'ms';
+
+  const up = m.uptimeSec||0;
+  $('uptime').textContent = Math.floor(up/3600)+'h '+Math.floor((up%3600)/60)+'m';
+  $('health').textContent = (health && health.ok) ? 'Healthy' : 'Unreachable';
+
+  $('u-period').textContent = m.usage?.period ?? '—';
+  const pt = m.usage?.prompt_tokens ?? 0;
+  const ct = m.usage?.completion_tokens ?? 0;
+  const cached = m.usage?.cached_tokens ?? 0;
+
+  $('u-tokens').textContent = (pt + ct + cached).toLocaleString();
+  $('u-cost').textContent = m.usage?.costUSD != null ? ('$' + m.usage.costUSD.toFixed(6)) : '—';
+
+  $('errors-tbody').innerHTML =
+    (Array.isArray(errs) ? errs : [])
+      .map(e=>`<tr><td>${fmt(e.at)}</td><td class="mono">${esc(e.message)}</td></tr>`).join('') ||
+    '<tr><td colspan="2" style="color:var(--muted)">No recent errors</td></tr>';
+
+  $('events-list').innerHTML =
+    (Array.isArray(evs) ? evs : []).map(formatEvent).join('') ||
+    '<li style="color:var(--muted)">No recent events</li>';
+
+  // safest metrics-log rendering (no innerHTML)
+  api('/api/portal/metrics-log').then(r=>r.json()).then(data=>{
+    const ul = $('metrics-log');
+    ul.textContent = '';
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.style.color = 'var(--muted)';
+      li.textContent = 'No metrics logged';
+      ul.appendChild(li);
+      return;
+    }
+    rows.forEach(m=>{
+      const li = document.createElement('li');
+      li.append(document.createTextNode(`[${m?.at ? fmt(m.at) : '—'}] `));
+      const strong = document.createElement('strong');
+      strong.textContent = m?.type ?? '';
+      li.appendChild(strong);
+      li.append(document.createTextNode(`: ${m?.value ?? ''}`));
+      ul.appendChild(li);
+    });
+  });
+
+  series.push(Math.max(0, (m.requestsToday||0) - (window.__lastReqs||0)));
+  series.shift();
+  window.__lastReqs = m.requestsToday||0;
+  drawSpark();
+}
+
+</script>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script>
+  // Register once, after Chart.js is loaded
+  const DepthShadow = {
+    id: 'depthShadow',
+    beforeDatasetDraw(chart, args, opts) {
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.shadowColor  = opts.color   || 'rgba(0,0,0,.45)';
+      ctx.shadowBlur   = opts.blur    || 22;
+      ctx.shadowOffsetX= opts.offsetX || 0;
+      ctx.shadowOffsetY= opts.offsetY || 10;
+    },
+    afterDatasetDraw(chart) {
+      chart.ctx.restore();
+    }
+  };
+  Chart.register(DepthShadow);
+</script>
+
+
+<script>
+Chart.defaults.color = getComputedStyle(document.documentElement).getPropertyValue('--text');
+Chart.defaults.borderColor = getComputedStyle(document.documentElement).getPropertyValue('--border');
+Chart.defaults.responsive = true;
+
+
+
+let tokenChart, costChart, forecastChart, conversationChart;
+
+// --- Params for API ---
+const params = new URLSearchParams(window.location.search);
+const tenant = params.get("tenant") || "default";
+const key = params.get("key");
+const authQuery = `tenant=${tenant}${key ? `&key=${key}` : ""}`;
+
+// --- Forecast Helpers ---
+function forecastUsage(history) {
+  if (!history.length) return { tokens: 0, cost: 0, trend: "flat", dailyTotals: [] };
+
+  const recent = history.slice(-7); // last 7 entries
+  const dailyTotals = recent.map(h => (h.prompt_tokens||0) + (h.completion_tokens||0));
+
+  // regression slope
+  const n = dailyTotals.length;
+  const x = [...Array(n).keys()];
+  const meanX = x.reduce((a,b)=>a+b,0)/n;
+  const meanY = dailyTotals.reduce((a,b)=>a+b,0)/n;
+
+  let num=0, den=0;
+  for (let i=0;i<n;i++){
+    num += (x[i]-meanX)*(dailyTotals[i]-meanY);
+    den += (x[i]-meanX)**2;
+  }
+  const slope = den ? num/den : 0;
+
+  const tokensMonth = dailyTotals.reduce((a,b)=>a+b,0) * (30/n);
+  const costMonth   = (tokensMonth/1000) * 0.002;
+
+  return {
+    tokens: Math.round(tokensMonth),
+    cost: costMonth.toFixed(2),
+    trend: slope>0 ? "increasing" : (slope<0 ? "decreasing" : "flat"),
+    dailyTotals
+  };
+}
+
+function updateForecast(history) {
+  const forecast = forecastUsage(history);
+
+  document.getElementById('forecastText').textContent =
+    `PMC: $${forecast.cost} (${forecast.trend} trend)`;
+
+  if (!forecastChart) {
+    forecastChart = new Chart(document.getElementById('forecastSparkline'), {
+      type: 'line',
+      data: {
+        labels: forecast.dailyTotals.map((_, i) => `Day ${i+1}`),
+        datasets: [{
+          data: forecast.dailyTotals,
+          borderColor: '#2ecc71',
+          backgroundColor: 'transparent',
+          pointRadius: 0,
+          tension: 0.3
+        }]
+      },
+      options: {
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: false },
+          y: { display: false }
+        }
+      }
+    });
+  } else {
+    forecastChart.data.labels = forecast.dailyTotals.map((_, i) => `Day ${i+1}`);
+    forecastChart.data.datasets[0].data = forecast.dailyTotals;
+    forecastChart.update();
+  }
+}
+
+// --- Time-of-Day Histogram ---
+function drawConversationHistogram(history) {
+  const hourlyBuckets = Array(24).fill(0).map(()=>({prompt:0,completion:0}));
+
+  history.forEach(h => {
+    const hour = new Date(h.at).getHours();
+    hourlyBuckets[hour].prompt     += h.prompt_tokens || 0;
+    hourlyBuckets[hour].completion += h.completion_tokens || 0;
+  });
+
+  const labels = [...Array(24).keys()].map(h => `${h}:00`);
+  const promptData = hourlyBuckets.map(b => b.prompt);
+  const completionData = hourlyBuckets.map(b => b.completion);
+
+  if (!conversationChart) {
+    // Create it the first time
+    conversationChart = new Chart(document.getElementById('conversationHistogram'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Prompt', data: promptData, backgroundColor: '#3498db' },
+          { label: 'Completion', data: completionData, backgroundColor: '#2ecc71' }
+        ]
+      },
+      options: {
+        responsive: true,
+        animation: { duration: 500 }, // smooth update instead of flicker
+        scales: {
+        x: { 
+          stacked: true, 
+          ticks: { color: '#e9ecf1' } 
+        },
+        y: { 
+          stacked: true, 
+          ticks: { 
+            color: '#e9ecf1',
+            stepSize: 200   // ✅ increments of 200
+          },
+          beginAtZero: true,
+          suggestedMax: 2000 // optional, controls top of axis (adjust as needed)
+        }
+        }
+      }
+
+    });
+  } else {
+    // Just update data and re-render
+    conversationChart.data.labels = labels;
+    conversationChart.data.datasets[0].data = promptData;
+    conversationChart.data.datasets[1].data = completionData;
+    conversationChart.update();
+  }
+}
+
+
+// --- Main Loader ---
+async function loadUsageCharts() {
+  try {
+    const res = await fetch(`/api/portal/usage?${authQuery}`);
+    if (!res.ok) throw new Error("Usage API error: " + res.status);
+    const { current, history } = await res.json();
+    console.log("📊 Usage response:", current, history);
+
+    // Token Pie
+    if (!tokenChart) {
+      tokenChart = new Chart(document.getElementById('tokenBreakdownChart'), {
+        type: 'pie',
+        data: {
+          labels: ['Prompt Tokens', 'Completion Tokens'],
+          datasets: [{
+            data: [0, 0],
+            backgroundColor: ['#3498db', '#2ecc71']
+          }]
+        }
+      });
+    }
+    tokenChart.data.datasets[0].data = [
+      current.prompt_tokens || 0,
+      current.completion_tokens || 0
+    ];
+    tokenChart.update();
+
+    // ⏰ Time-of-day Histogram (instead of Sankey)
+    drawConversationHistogram(history);
+
+    // Cost Pie
+    if (current.breakdown) {
+      const { promptUSD = 0, completionUSD = 0, cachedUSD = 0 } = current.breakdown;
+      if (!costChart) {
+        costChart = new Chart(document.getElementById('costBreakdownChart'), {
+          type: 'pie',
+          data: {
+            labels: ['Prompt $', 'Completion $', 'Cached $'],
+            datasets: [{
+              data: [0, 0, 0],
+              backgroundColor: ['#3498db', '#2ecc71', '#f39c12']
+            }]
+          },
+          options: {
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  label: function (context) {
+                    let value = context.raw || 0;
+                    return `${context.label}: $${value.toFixed(4)}`;
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+      costChart.data.datasets[0].data = [promptUSD, completionUSD, cachedUSD];
+      costChart.update();
+    }
+
+    // Forecast
+    updateForecast(history);
+
+  } catch (err) {
+    console.error("❌ loadUsageCharts failed:", err);
+  }
+}
+
+
+// --- Kickoff ---
+window.addEventListener('resize', drawSpark);
+
+(async function start(){
+  await loadConfig();
+  drawSpark();
+
+  // load initial data + charts
+  loadData();
+  loadUsageCharts();
+
+  // refresh loops
+  setInterval(loadData, 5000);        // refresh live stats
+  setInterval(loadUsageCharts, 10000); // refresh usage charts
+})();
+
+</script>

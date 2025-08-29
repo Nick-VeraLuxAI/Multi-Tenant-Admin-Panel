@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Loading…</title>
+<style>
+  :root{
+    /* Safe defaults; overridden by config */
+    --bg:#2E7D5B; --bg2:#C9A227; --card:#16412e; --text:#e9ecf1; --muted:#a6accd;
+    --accent:#444C56; --good:#2ecc71; --warn:#f1c40f; --bad:#e74c3c; --border:#C9A227;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));color:var(--text);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  header{position:sticky;top:0;background:#0d1020cc;backdrop-filter:saturate(150%) blur(10px);border-bottom:1px solid var(--border);padding:12px 20px}
+  header .brand{display:flex;gap:10px;align-items:center;font-weight:700;letter-spacing:.3px}
+  header .brand img{height:22px}
+  main{padding:24px;max-width:1200px;margin:0 auto}
+  .grid{display:grid;gap:16px}
+  .cards{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:0 10px 30px #0006}
+  .card h3{margin:0 0 8px 0;font-size:14px;color:var(--muted)}
+  .kpi{padding:16px}
+  .kpi .value{font-size:28px;font-weight:800}
+  .good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  .section{padding:16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;text-align:left}
+  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+  .split{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+  canvas{width:100%;height:160px}
+  @media (max-width:900px){ .cards{grid-template-columns:repeat(2,minmax(0,1fr))} .split{grid-template-columns:1fr} }
+  @media (max-width:520px){ .cards{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img id="brand-logo" alt="" style="display:none">
+    <span id="brand-text"></span>
+  </div>
+</header>
+
+<main class="grid">
+  <!-- KPIs -->
+  <section class="grid cards">
+    <div class="card kpi"><h3>Status</h3><div id="kpi-status" class="value">—</div></div>
+    <div class="card kpi"><h3>Requests (Today)</h3><div id="kpi-req" class="value">0</div></div>
+    <div class="card kpi"><h3>Success Rate</h3><div id="kpi-sr" class="value">0%</div></div>
+    <div class="card kpi"><h3>Avg Latency</h3><div id="kpi-lat" class="value">0ms</div></div>
+  </section>
+
+  <!-- Chart + Uptime/Usage -->
+  <section class="split">
+    <div class="card section">
+      <h3>Requests (last minute)</h3>
+      <canvas id="spark"></canvas>
+    </div>
+    <div class="grid">
+      <div class="card section"><h3>Uptime</h3><div id="uptime" class="value mono">—</div><div id="health" style="color:var(--muted)">Checking…</div></div>
+      <div class="card section" id="usage-card"><h3>Usage</h3>
+        <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px">
+          <div>Period</div><div id="u-period" class="mono" style="text-align:right">—</div>
+          <div>Tokens</div><div id="u-tokens" class="mono" style="text-align:right">—</div>
+          <div>Cost</div><div id="u-cost" class="mono" style="text-align:right">—</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Errors -->
+  <section class="card section" id="errors-card">
+    <h3>Recent Errors</h3>
+    <table>
+      <thead><tr><th>Time</th><th>Message</th></tr></thead>
+      <tbody id="errors-tbody"><tr><td colspan="2" style="color:var(--muted)">No errors</td></tr></tbody>
+    </table>
+  </section>
+
+  <!-- Events -->
+  <section class="card section" id="events-card">
+    <h3>Recent Events</h3>
+    <ul id="events-list"></ul>
+  </section>
+</main>
+
+<h2>📈 Metrics Log</h2>
+<ul id="metrics-log"></ul>
+
+<h2>💬 Conversation History</h2>
+<div id="conversations"></div>
+
+
+<footer style="padding:12px 20px;color:var(--muted)">
+  <span id="brand-footer"></span>
+</footer>
+
+<script>
+  
+const $  = id => document.getElementById(id);
+const fmt = ts => new Date(ts).toLocaleString();
+
+// ── Multi-tenant: get tenant/key from query (?tenant=solomon&key=abc)
+const qs = new URLSearchParams(location.search);
+const TENANT = (qs.get('tenant') || 'default').toLowerCase();
+const KEY    = qs.get('key') || '';
+
+// Helper: call APIs
+function api(path, opts = {}) {
+  const url = new URL(path, location.origin);
+  url.searchParams.set('tenant', TENANT);
+  if (KEY) url.searchParams.set('key', KEY);
+  return fetch(url, opts);
+}
+
+// -------------- Brand loader (config.json) --------------
+async function loadConfig(){
+  try{
+    // Try /static/config.<tenant>.json then fallback
+    let res = await fetch(`/static/config.${TENANT}.json?v=${Date.now()}`);
+    if (!res.ok) res = await fetch(`/static/config.json?v=${Date.now()}`);
+    if (!res.ok) throw new Error('config not found');
+    const cfg = await res.json();
+
+    // Title & brand text (fully config-driven)
+    const name   = cfg.brandName || 'Brand';
+    const portal = cfg.portalLabel || 'Portal';
+    const templ  = cfg.titleTemplate || '{{brand}} · {{portal}}';
+    const render = s => s.replaceAll('{{brand}}', name).replaceAll('{{portal}}', portal);
+
+    document.title = render(templ);
+    $('brand-text').textContent = render(templ);
+
+    // Footer (optional override)
+    const footerEl = document.getElementById('brand-footer');
+    if (footerEl) footerEl.textContent = cfg.footerText || render(templ);
+
+    // Logo (optional)
+    if (cfg.logo) {
+      const img = $('brand-logo');
+      img.src = cfg.logo;
+      img.style.display = '';
+      img.alt = name;
+    }
+
+    // Favicon (optional)
+    if (cfg.favicon){
+      const link = document.querySelector('link[rel="icon"]') || document.createElement('link');
+      link.rel = 'icon'; link.href = cfg.favicon;
+      document.head.appendChild(link);
+    }
+
+    // Colors
+    const c = cfg.colors || {};
+    const set = (k,v)=> v!=null && document.documentElement.style.setProperty('--'+k, v);
+    set('bg', c.bg); set('bg2', c.bg2); set('card', c.card); set('text', c.text);
+    set('muted', c.muted); set('accent', c.accent); set('good', c.good);
+    set('warn', c.warn); set('bad', c.bad); set('border', c.border);
+
+    // Gradient angle
+    const angle = Number(cfg.gradientAngle) || 135;
+    document.body.style.background = `linear-gradient(${angle}deg, var(--bg), var(--bg2))`;
+
+    // Feature toggles
+    const feat = cfg.features || {};
+    if (feat.usage === false)  $('usage-card').style.display = 'none';
+    if (feat.errors === false) $('errors-card').style.display = 'none';
+    if (feat.events === false) $('events-card').style.display = 'none';
+
+  }catch(e){
+    console.warn('Using default branding; unable to load config:', e.message);
+  }
+}
+
+// -------------- Tiny sparkline --------------
+const spark = document.getElementById('spark');
+const ctx = spark.getContext('2d');
+let series = Array.from({length:60}, ()=>0);
+function drawSpark(){
+  const w=spark.clientWidth||300, h=spark.clientHeight||160;
+  spark.width=w*2; spark.height=h*2; ctx.setTransform(2,0,0,2,0,0);
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent') || '#6ea8fe';
+  ctx.lineWidth=2; ctx.beginPath();
+  const max = Math.max(1, ...series);
+  series.forEach((v,i)=> {
+    const x = (i/(series.length-1))*w;
+    const y = h - (v/max)*h;
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+  });
+  ctx.stroke();
+}
+
+// ---------- Event formatter (only once) ----------
+function formatEvent(ev) {
+  let color;
+  if (ev.role === "user") color = "var(--good)";
+  else if (ev.role === "ai") color = "var(--accent)";
+  else color = "var(--muted)";
+
+  return `
+    <li style="margin:4px 0;">
+      <span style="font-weight:bold;color:${color}">[${ev.role.toUpperCase()}]</span>
+      <span style="color:${color};opacity:0.8"> ${fmt(ev.at)}</span>
+      <div style="margin-left:12px;color:${color};font-family:ui-monospace;">
+        ${ev.message}
+      </div>
+    </li>`;
+}
+
+// -------------- Data loader --------------
+async function loadData(){
+  const [m, errs, evs, health] = await Promise.all([
+    api('/api/portal/metrics').then(r=>r.json()),
+    api('/api/portal/errors').then(r=>r.json()),
+    api('/api/portal/events').then(r=>r.json()),
+    api('/api/portal/health').then(r=>r.json()).catch(()=>({ok:false}))
+  ]);
+
+  // KPIs
+  const status = (m.status||'ok').toUpperCase();
+  const color = status==='OK'?'good':(status==='DEGRADED'?'warn':'bad');
+  $('kpi-status').textContent = status;
+  $('kpi-status').className = 'value '+color;
+
+  $('kpi-req').textContent = m.requestsToday ?? 0;
+  $('kpi-sr').textContent  = (m.successRate ?? 0) + '%';
+  $('kpi-lat').textContent = (m.avgLatencyMs ?? 0) + 'ms';
+
+  const up = m.uptimeSec||0;
+  $('uptime').textContent = Math.floor(up/3600)+'h '+Math.floor((up%3600)/60)+'m';
+  $('health').textContent = health.ok ? 'Healthy' : 'Unreachable';
+
+  // Usage
+  $('u-period').textContent = m.usage?.period ?? '—';
+  const pt = m.usage?.prompt_tokens ?? 0;
+  const ct = m.usage?.completion_tokens ?? 0;
+  const cached = m.usage?.cached_tokens ?? 0;
+  $('u-tokens').textContent = (pt + ct + cached).toLocaleString();
+  $('u-cost').textContent = m.usage?.costUSD != null ? ('$' + m.usage.costUSD.toFixed(6)) : '—';
+
+  // Errors
+  $('errors-tbody').innerHTML = (errs||[]).map(e=>`<tr><td>${fmt(e.at)}</td><td class="mono">${e.message}</td></tr>`).join('')
+    || '<tr><td colspan="2" style="color:var(--muted)">No recent errors</td></tr>';
+
+  // Events
+  $('events-list').innerHTML = (evs||[]).map(formatEvent).join('')
+    || '<li style="color:var(--muted)">No recent events</li>';
+
+  // Metrics Log
+  api('/api/portal/metrics-log').then(r=>r.json()).then(data=>{
+    $('metrics-log').innerHTML = (data||[]).map(m=>`<li>[${fmt(m.at)}] <strong>${m.type}</strong>: ${m.value}</li>`).join('')
+      || '<li style="color:var(--muted)">No metrics logged</li>';
+  });
+
+  // Conversations
+  api('/api/portal/conversations').then(r=>r.json()).then(convos=>{
+    const container = $('conversations');
+    container.innerHTML = Object.entries(convos||{}).map(([sid,convo])=>{
+      const messages = Array.isArray(convo.messages)
+        ? convo.messages.map(msg=>{
+            const isUser = msg.role === 'user';
+            const bubbleColor = isUser ? 'var(--good)' : 'var(--accent)';
+            const align = isUser ? 'flex-start' : 'flex-end';
+            const textAlign = isUser ? 'left' : 'right';
+            return `
+              <div style="display:flex;justify-content:${align};margin:6px 0;">
+                <div style="
+                  max-width:70%;padding:8px 12px;border-radius:12px;
+                  background:${bubbleColor};color:#fff;text-align:${textAlign};
+                  box-shadow:0 2px 6px #0003;">
+                  <div style="font-size:13px;opacity:0.8;margin-bottom:2px;">
+                    [${msg.role}] — ${fmt(msg.at || Date.now())}
+                  </div>
+                  <div style="white-space:pre-wrap">${msg.content}</div>
+                </div>
+              </div>`;
+          }).join('')
+        : `<pre>${JSON.stringify(convo,null,2)}</pre>`;
+      return `
+        <div style="border:1px solid var(--border);border-radius:8px;margin:12px 0;padding:12px;background:var(--card)">
+          <div style="font-weight:bold;margin-bottom:8px">Session: ${sid}</div>
+          <div>${messages}</div>
+        </div>`;
+    }).join('') || '<div style="color:var(--muted)">No conversations yet</div>';
+  });
+
+  // Update sparkline
+  series.push(Math.max(0, (m.requestsToday||0) - (window.__lastReqs||0)));
+  series.shift();
+  window.__lastReqs = m.requestsToday||0;
+  drawSpark();
+}
+
+window.addEventListener('resize', drawSpark);
+(async function start(){
+  await loadConfig();
+  drawSpark();
+  loadData();
+  setInterval(loadData, 5000);
+})();
+</script>
+</body>
+</html>

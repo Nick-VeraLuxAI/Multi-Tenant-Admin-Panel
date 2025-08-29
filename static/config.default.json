@@ -1,0 +1,26 @@
+{
+  "brandName": "Solomon",
+  "portalLabel": "Client Portal",
+  "titleTemplate": "{{brand}} · {{portal}}",
+  "footerText": "© 2025 VeraLux AI · All Rights Reserved",
+  "logo": "/static/brand/eralux (100 x 98 px).png",
+  "favicon": "/static/brand/favicon.png",
+  "gradientAngle": 135,
+  "colors": {
+    "bg": "#0f2027",
+    "bg2": "#2c5364",
+    "card": "#1e1e1e",
+    "text": "#ffffff",
+    "muted": "#a6accd",
+    "accent": "#fdbd3c",
+    "good": "#2ecc71",
+    "warn": "#f1c40f",
+    "bad": "#e74c3c",
+    "border": "#C9A227"
+  },
+  "features": {
+    "usage": true,
+    "errors": true,
+    "events": true
+  }
+}
