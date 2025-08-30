@@ -222,11 +222,13 @@ const esc = s => String(s ?? '')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
   .replace(/'/g,'&#39;');
 
+let TENANT = "default"; // will be set after login
+
 // 👇 Session / auth UI helpers
 function show(view){
-  const login = $('login');        // login panel
-  const dash  = $('dashboard');    // dashboard content
-  const btn   = $('logoutBtn');    // header logout
+  const login = $('login');
+  const dash  = $('dashboard');
+  const btn   = $('logoutBtn');
 
   if (view === 'dashboard') {
     if (login) login.style.display = 'none';
@@ -239,19 +241,22 @@ function show(view){
     setTimeout(() => $('email')?.focus(), 0);
     const err = $('loginError');
     if (err) err.textContent = '';
-    $('password')?.value = '';           // clear stale password
-    $('loginForm')?.reset();             // or reset the whole form
+    $('password')?.value = '';
+    $('loginForm')?.reset();
   }
 }
 
+// 🔐 Check active session
 async function checkSession(){
-  try{
+  try {
     const r = await fetch('/api/me');
     if (r.ok) {
+      const user = await r.json();
+      TENANT = user.tenantId;   // ✅ tenant from session
       show('dashboard');
       return true;
     }
-  }catch(e){}
+  } catch(e) {}
   show('login');
   return false;
 }
@@ -272,19 +277,21 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.textContent = 'Signing in...';
 
       try {
-        const res = await fetch(`/api/login?tenant=${encodeURIComponent(TENANT)}`, {
+        const res = await fetch(`/api/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password })
         });
 
         if (res.ok) {
+          // get tenant from /api/me
+          const me = await fetch('/api/me').then(r=>r.json());
+          TENANT = me.tenantId;
           show('dashboard');
           loadData();
           loadUsageCharts();
         } else {
-          const errText = await res.text();
-          $('loginError').textContent = errText || 'Invalid email or password.';
+          $('loginError').textContent = 'Invalid email or password.';
           $('password').value = '';
         }
       } catch (err) {
@@ -306,19 +313,24 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-// ── Multi-tenant: get tenant/key from query (?tenant=solomon&key=abc)
-const qs = new URLSearchParams(location.search);
-const TENANT = (qs.get('tenant') || 'default').toLowerCase();
-const KEY    = qs.get('key') || '';
 
-// Helper: call APIs
+
+
+// Helper: call APIs (uses session cookie + tenant context)
 function api(path, opts = {}) {
   const url = new URL(path, location.origin);
-  url.searchParams.set('tenant', TENANT);
-  if (KEY) url.searchParams.set('key', KEY);
-  return fetch(url, opts).then(async (r) => {
+
+  // Only attach tenant if we already know it
+  if (TENANT) {
+    url.searchParams.set('tenant', TENANT);
+  }
+
+  return fetch(url, {
+    ...opts,
+    credentials: 'include' // ✅ send cookies (important for session auth)
+  }).then(async (r) => {
     if (r.status === 401) {
-      show('login');
+      show('login'); // boot back to login if cookie is missing/expired
       throw new Error('auth_required');
     }
     return r;
@@ -328,8 +340,8 @@ function api(path, opts = {}) {
 
 async function loadPremiumModule() {
   try {
-    const p = new URLSearchParams(location.search);
-    const tenant = (p.get('tenant') || 'default').toLowerCase();
+    // ✅ Use the tenant already set from login/session
+    const tenant = TENANT || "default";
 
     const res = await fetch(`/static/config.${tenant}.json?v=${Date.now()}`);
     if (!res.ok) return;
@@ -339,7 +351,7 @@ async function loadPremiumModule() {
       const el = document.getElementById("premium-sections");
       if (el) {
         el.dataset.tenant = tenant;
-        el.dataset.key = cfg.publicKey || (p.get('key') || '');
+        el.dataset.key = cfg.publicKey || '';
         el.style.display = "";
       }
       const s = document.createElement("script");
@@ -737,25 +749,15 @@ window.addEventListener('resize', drawSpark);
 
 (async function start(){
   await loadConfig();
+  drawSpark();
 
-  // ✅ Only call drawSpark if it exists and the canvas is present
-  if (typeof drawSpark === "function" && document.getElementById("spark")) {
-    drawSpark();
-  }
-
-  // 🔐 Check session first; if not logged in, show login and stop here.
   const authed = await checkSession();
   if (!authed) return;
 
-  // 📊 Now that we’re authed, load the data and start loops
   loadData();
   loadUsageCharts();
   await loadPremiumModule();
-
   setInterval(loadData, 5000);
   setInterval(loadUsageCharts, 10000);
 })();
-
-
 </script>
-
