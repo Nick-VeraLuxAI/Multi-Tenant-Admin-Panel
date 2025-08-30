@@ -2,9 +2,17 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const cookieParser = require('cookie-parser');
+
+// DB (same RDS as the bot)
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+app.set('trust proxy', 1);
+
+const PORT = process.env.PORT || 4000;
+
 
 // --- simple auth gate (optional) ---
 function gate(req, res, next) {
@@ -17,6 +25,8 @@ function gate(req, res, next) {
 
 app.use('/static', express.static(path.join(__dirname, 'static')));
 app.use(express.json());
+app.use(cookieParser());
+
 
 // apply gate to portal + APIs
 app.use(['/portal', '/api/portal'], gate);
@@ -27,9 +37,63 @@ app.get('/portal', (req, res) =>
   res.sendFile(path.join(__dirname, 'views', 'portal.html'))
 );
 
+// Resolve tenant for admin:
+function resolveAdminTenant(req) {
+  const clean = v => String(v || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+  const fromCookie = clean(req.cookies?.admin_tenant);
+  if (fromCookie) return fromCookie;
+
+  const fromHeader = clean(req.get('x-tenant'));
+  if (fromHeader) return fromHeader;
+
+  // TEMP compatibility with old clients
+  const fromQuery = clean(req.query?.tenant);
+  if (fromQuery) return fromQuery;
+
+  const host = String(req.hostname || '').toLowerCase();
+  const sub = clean(host.split('.')[0]);
+  if (sub && !['www','localhost','127','admin'].includes(sub)) return sub;
+
+  return 'default';
+}
+
+
+// List tenants for picker
+app.get('/api/tenants', async (_req, res) => {
+  const rows = await prisma.tenant.findMany({
+    select: { id: true, name: true, subdomain: true, plan: true },
+    orderBy: { name: 'asc' }
+  });
+  res.json(rows);
+});
+
+// Choose current tenant (stored in httpOnly cookie)
+app.post('/api/current-tenant', async (req, res) => {
+  const sub = String(req.body?.subdomain || '').toLowerCase();
+  if (!sub) return res.status(400).json({ error: 'subdomain_required' });
+
+  const t = await prisma.tenant.findFirst({
+    where: {
+      OR: [
+        { subdomain: sub },
+        { id: sub },
+        { name: { equals: sub, mode: 'insensitive' } }
+      ]
+    },
+    select: { id: true, name: true, subdomain: true }
+  });
+  if (!t) return res.status(404).json({ error: 'tenant_not_found' });
+
+  res.cookie('admin_tenant', t.subdomain || t.id, {
+    httpOnly: true, sameSite: 'Lax', maxAge: 1000 * 60 * 60 * 24 * 30
+  });
+  res.json({ ok: true, tenant: t });
+});
+
 // server.js (the admin/portal server)
 app.get('/api/portal/premium', (req, res) => {
-  const tenant = (req.query.tenant || "default").toLowerCase();
+  const tenant = resolveAdminTenant(req);
   const state = getTenantState(tenant);
 
   const leads = (state.metrics || []).filter(m => m.type === 'lead' && m.value);
@@ -103,28 +167,28 @@ function metrics(state) {
 
 // -------------------- APIs (read) --------------------
 app.get('/api/portal/metrics', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const data = metrics(getTenantState(tenant));
   console.log(`📤 [${tenant}] Sending metrics:`, data);
   res.json(data);
 });
 
 app.get('/api/portal/events', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const events = getTenantState(tenant).events;
   console.log(`📤 [${tenant}] Sending ${events.length} events`);
   res.json(events);
 });
 
 app.get('/api/portal/errors', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const errors = getTenantState(tenant).errors;
   console.log(`📤 [${tenant}] Sending ${errors.length} errors`);
   res.json(errors);
 });
 
 app.get('/api/portal/usage', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const state = getTenantState(tenant);
   console.log(`📤 [${tenant}] Sending usage: current=`, state.usage, `history count=${state.usages.length}`);
   res.json({ current: state.usage, history: state.usages });
@@ -136,14 +200,14 @@ app.get('/api/portal/health', (req, res) => {
 });
 
 app.get('/api/portal/metrics-log', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const metricsLog = getTenantState(tenant).metrics;
   console.log(`📤 [${tenant}] Sending metrics-log (${metricsLog.length} entries)`);
   res.json(metricsLog);
 });
 
 app.get('/api/portal/conversations', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const conversations = getTenantState(tenant).conversations;
   console.log(`📤 [${tenant}] Sending conversations: ${Object.keys(conversations).length} sessions`);
   res.json(conversations);
@@ -151,7 +215,7 @@ app.get('/api/portal/conversations', (req, res) => {
 
 // -------------------- APIs (write: unified) --------------------
 app.post('/api/portal/log', (req, res) => {
-  const tenant = req.query.tenant || "default";
+  const tenant = resolveAdminTenant(req);
   const state = getTenantState(tenant);
   const { type, role, message, user, usage, metricType, value, sessionId, data } = req.body;
 
@@ -180,34 +244,39 @@ app.post('/api/portal/log', (req, res) => {
 
 // -------------------- APIs (write: explicit endpoints) --------------------
 app.post('/api/portal/log-event', (req, res) => {
-  const { tenant = "default", role } = req.query;
+  const tenant = resolveAdminTenant(req);
+  const { role } = req.query; // or move role into body if you prefer
   addEvent(getTenantState(tenant), role, req.body.message, tenant);
   res.json({ ok: true });
 });
 
 app.post('/api/portal/log-error', (req, res) => {
-  const { tenant = "default", user } = req.query;
+  const tenant = resolveAdminTenant(req);
+  const { user } = req.query; // or body
   addError(getTenantState(tenant), user, req.body.message, tenant);
   res.json({ ok: true });
 });
 
 app.post('/api/portal/log-usage', (req, res) => {
-  const { tenant = "default" } = req.query;
+  const tenant = resolveAdminTenant(req);
   addUsage(getTenantState(tenant), req.body, tenant);
   res.json({ ok: true });
 });
 
 app.post('/api/portal/log-metric', (req, res) => {
-  const { tenant = "default", type } = req.query;
+  const tenant = resolveAdminTenant(req);
+  const { type } = req.query; // or body
   addMetric(getTenantState(tenant), type, req.body.value, tenant);
   res.json({ ok: true });
 });
 
 app.post('/api/portal/log-conversation', (req, res) => {
-  const { tenant = "default", sessionId } = req.query;
+  const tenant = resolveAdminTenant(req);
+  const { sessionId } = req.query; // or body
   addConversation(getTenantState(tenant), sessionId, req.body, tenant);
   res.json({ ok: true });
 });
+
 
 // -------------------- Helpers --------------------
 function addEvent(state, role, message, tenant) {
