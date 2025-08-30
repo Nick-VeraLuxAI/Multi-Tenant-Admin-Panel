@@ -8,14 +8,15 @@ datasource db {
 }
 
 model Tenant {
-  id              String            @id
+  id              String   @id
   name            String
-  apiKey          String            @unique
-  plan            String            @default("basic")
-  createdAt       DateTime          @default(now())
-  subdomain       String?           @unique
-  branding        Json?             @default("{}")
-  settings        Json?             @default("{}")
+  apiKey          String   @unique
+  plan            String   @default("basic")
+  createdAt       DateTime @default(now())
+  subdomain       String?  @unique
+  branding        Json?
+  settings        Json?
+
   Conversation    Conversation[]
   ConversationLog ConversationLog[]
   Event           Event[]
@@ -25,12 +26,13 @@ model Tenant {
 }
 
 model Conversation {
-  id        String    @id
+  id        String   @id
   tenantId  String
   sessionId String
-  startedAt DateTime  @default(now())
+  startedAt DateTime @default(now())
   endedAt   DateTime?
-  Tenant    Tenant    @relation(fields: [tenantId], references: [id])
+
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
   Message   Message[]
 
   @@unique([tenantId, sessionId])
@@ -43,6 +45,7 @@ model ConversationLog {
   sessionId String
   at        DateTime @default(now())
   data      Json
+
   Tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
@@ -54,8 +57,8 @@ model Event {
   type      String
   content   String
   createdAt DateTime @default(now())
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
   @@index([tenantId])
 }
 
@@ -68,8 +71,8 @@ model Lead {
   snippet   String
   tags      String[]
   createdAt DateTime @default(now())
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
   @@index([tenantId])
 }
 
@@ -81,8 +84,8 @@ model Message {
   tokensIn       Int          @default(0)
   tokensOut      Int          @default(0)
   createdAt      DateTime     @default(now())
-  Conversation   Conversation @relation(fields: [conversationId], references: [id])
 
+  Conversation   Conversation @relation(fields: [conversationId], references: [id])
   @@index([conversationId])
 }
 
@@ -92,8 +95,8 @@ model Metric {
   name      String
   value     Float
   createdAt DateTime @default(now())
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
 
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
   @@index([tenantId])
 }
 
@@ -106,7 +109,20 @@ model Usage {
   cachedTokens     Int
   cost             Float
   createdAt        DateTime @default(now())
-  Tenant           Tenant   @relation(fields: [tenantId], references: [id])
 
+  Tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  @@index([tenantId])
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  tenantId     String
+  email        String
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  Tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
   @@index([tenantId])
 }
