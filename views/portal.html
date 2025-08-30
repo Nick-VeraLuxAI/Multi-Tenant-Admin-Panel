@@ -99,10 +99,30 @@
   <div class="brand">
     <img id="brand-logo" alt="" style="display:none">
     <span id="brand-text"></span>
+    <button id="logoutBtn" style="margin-left:auto; padding:6px 10px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:8px; cursor:pointer; display:none">
+  Logout
+</button>
+
   </div>
 </header>
 
-<main class="grid">
+<!-- 🔐 Login panel (hidden when authed) -->
+<div id="login" style="display:none; max-width:420px; margin:40px auto; background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 30px #0006; padding:20px">
+  <h2 style="margin:0 0 12px 0">Admin Login</h2>
+  <form id="loginForm" class="grid" style="gap:10px">
+  <input type="email" id="email" name="email" autocomplete="username" placeholder="Email" required
+        style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
+  <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Password" required
+        style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
+    <button type="submit" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer">
+      Sign In
+    </button>
+  </form>
+  <p id="loginError" style="color:var(--bad); margin-top:8px"></p>
+</div>
+
+<!-- 📊 Dashboard (hidden until authed) -->
+<main id="dashboard" class="grid" style="display:none">
   <div id="premium-sections" style="display:none" data-tenant="" data-key=""></div>
 
   <!-- Usage Visuals -->
@@ -190,8 +210,123 @@
 <footer style="padding:12px 20px;color:var(--muted)">
   <span id="brand-footer"></span>
 </footer>
+
+
+
+
 <script>
-(async function loadPremiumModule() {
+const $ = id => document.getElementById(id);
+const fmt = ts => new Date(ts).toLocaleString();
+const esc = s => String(s ?? '')
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+  .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+  .replace(/'/g,'&#39;');
+
+// 👇 Session / auth UI helpers
+function show(view){
+  const login = $('login');        // login panel
+  const dash  = $('dashboard');    // dashboard content
+  const btn   = $('logoutBtn');    // header logout
+
+  if (view === 'dashboard') {
+    if (login) login.style.display = 'none';
+    if (dash)  dash.style.display  = '';
+    if (btn)   btn.style.display   = '';
+  } else {
+    if (dash)  dash.style.display  = 'none';
+    if (btn)   btn.style.display   = 'none';
+    if (login) login.style.display = '';
+    setTimeout(() => $('email')?.focus(), 0);
+    const err = $('loginError');
+    if (err) err.textContent = '';
+    $('password')?.value = '';           // clear stale password
+    $('loginForm')?.reset();             // or reset the whole form
+  }
+}
+
+async function checkSession(){
+  try{
+    const r = await fetch('/api/me');
+    if (r.ok) {
+      show('dashboard');
+      return true;
+    }
+  }catch(e){}
+  show('login');
+  return false;
+}
+
+// 🔐 Login submit
+document.addEventListener('DOMContentLoaded', () => {
+  const form = $('loginForm');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('loginError').textContent = '';
+
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      const btn = form.querySelector('button[type="submit"]');
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in...';
+
+      try {
+        const res = await fetch(`/api/login?tenant=${encodeURIComponent(TENANT)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+
+        if (res.ok) {
+          show('dashboard');
+          loadData();
+          loadUsageCharts();
+        } else {
+          const errText = await res.text();
+          $('loginError').textContent = errText || 'Invalid email or password.';
+          $('password').value = '';
+        }
+      } catch (err) {
+        $('loginError').textContent = 'Network error — please try again.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+      }
+    });
+  }
+
+  const logout = $('logoutBtn');
+  if (logout) {
+    logout.addEventListener('click', async () => {
+      await fetch('/api/logout', { method: 'POST' });
+      location.reload();
+    });
+  }
+});
+
+
+// ── Multi-tenant: get tenant/key from query (?tenant=solomon&key=abc)
+const qs = new URLSearchParams(location.search);
+const TENANT = (qs.get('tenant') || 'default').toLowerCase();
+const KEY    = qs.get('key') || '';
+
+// Helper: call APIs
+function api(path, opts = {}) {
+  const url = new URL(path, location.origin);
+  url.searchParams.set('tenant', TENANT);
+  if (KEY) url.searchParams.set('key', KEY);
+  return fetch(url, opts).then(async (r) => {
+    if (r.status === 401) {
+      show('login');
+      throw new Error('auth_required');
+    }
+    return r;
+  });
+}
+
+
+async function loadPremiumModule() {
   try {
     const p = new URLSearchParams(location.search);
     const tenant = (p.get('tenant') || 'default').toLowerCase();
@@ -214,30 +349,6 @@
   } catch (e) {
     console.warn("Premium loader failed:", e.message);
   }
-})();
-</script>
-
-
-
-<script>
-const $ = id => document.getElementById(id);
-const fmt = ts => new Date(ts).toLocaleString();
-const esc = s => String(s ?? '')
-  .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-  .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
-  .replace(/'/g,'&#39;');
-
-// ── Multi-tenant: get tenant/key from query (?tenant=solomon&key=abc)
-const qs = new URLSearchParams(location.search);
-const TENANT = (qs.get('tenant') || 'default').toLowerCase();
-const KEY    = qs.get('key') || '';
-
-// Helper: call APIs
-function api(path, opts = {}) {
-  const url = new URL(path, location.origin);
-  url.searchParams.set('tenant', TENANT);
-  if (KEY) url.searchParams.set('key', KEY);
-  return fetch(url, opts);
 }
 
 // -------------- Brand loader (config.json) --------------
@@ -311,6 +422,7 @@ function drawSpark(){
 }
 
 // ---------- Event formatter ----------
+
 function formatEvent(ev){
   const role = (ev.role || '').toString();
   const color = role === "user" ? "var(--good)" : role === "ai" ? "var(--accent)" : "var(--muted)";
@@ -323,6 +435,8 @@ function formatEvent(ev){
       </div>
     </li>`;
 }
+
+
 
 // -------------- Data loader --------------
 async function loadData(){
@@ -426,11 +540,6 @@ Chart.defaults.responsive = true;
 
 let tokenChart, costChart, forecastChart, conversationChart;
 
-// --- Params for API ---
-const params = new URLSearchParams(window.location.search);
-const tenant = params.get("tenant") || "default";
-const key = params.get("key");
-const authQuery = `tenant=${tenant}${key ? `&key=${key}` : ""}`;
 
 // --- Forecast Helpers ---
 function forecastUsage(history) {
@@ -556,7 +665,7 @@ function drawConversationHistogram(history) {
 // --- Main Loader ---
 async function loadUsageCharts() {
   try {
-    const res = await fetch(`/api/portal/usage?${authQuery}`);
+    const res = await api('/api/portal/usage');
     if (!res.ok) throw new Error("Usage API error: " + res.status);
     const { current, history } = await res.json();
     console.log("📊 Usage response:", current, history);
@@ -630,13 +739,16 @@ window.addEventListener('resize', drawSpark);
   await loadConfig();
   drawSpark();
 
-  // load initial data + charts
+  // Check session first; if not logged in, show login and stop here.
+  const authed = await checkSession();
+  if (!authed) return;
+
+  // Now that we’re authed, load the data and start loops
   loadData();
   loadUsageCharts();
-
-  // refresh loops
-  setInterval(loadData, 5000);        // refresh live stats
-  setInterval(loadUsageCharts, 10000); // refresh usage charts
+  await loadPremiumModule();
+  setInterval(loadData, 5000);
+  setInterval(loadUsageCharts, 10000);
 })();
 
 </script>
