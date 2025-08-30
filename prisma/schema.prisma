@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Tenant {
-  id              String   @id
+  id              String   @id @default(cuid())
   name            String
   apiKey          String   @unique
   plan            String   @default("basic")
@@ -23,11 +23,11 @@ model Tenant {
   Lead            Lead[]
   Metric          Metric[]
   Usage           Usage[]
-  AdminUsers      AdminUser[]
+  AdminUser       AdminUser[]
 }
 
 model Conversation {
-  id        String   @id
+  id        String   @id @default(cuid())
   tenantId  String
   sessionId String
   startedAt DateTime @default(now())
@@ -41,7 +41,7 @@ model Conversation {
 }
 
 model ConversationLog {
-  id        String   @id
+  id        String   @id @default(cuid())
   tenantId  String
   sessionId String
   at        DateTime @default(now())
@@ -53,7 +53,7 @@ model ConversationLog {
 }
 
 model Event {
-  id        String   @id
+  id        String   @id @default(cuid())
   tenantId  String
   type      String
   content   String
@@ -64,7 +64,7 @@ model Event {
 }
 
 model Lead {
-  id        String   @id
+  id        String   @id @default(cuid())
   tenantId  String
   name      String
   email     String
@@ -78,7 +78,7 @@ model Lead {
 }
 
 model Message {
-  id             String       @id
+  id             String       @id @default(cuid())
   conversationId String
   role           String
   content        String
@@ -91,9 +91,9 @@ model Message {
 }
 
 model Metric {
-  id        String   @id
+  id        String   @id @default(cuid())
   tenantId  String
-  name      String
+  type      String
   value     Float
   createdAt DateTime @default(now())
 
@@ -102,13 +102,14 @@ model Metric {
 }
 
 model Usage {
-  id               String   @id
+  id               String   @id @default(cuid())
   tenantId         String
   model            String
   promptTokens     Int
   completionTokens Int
   cachedTokens     Int
   cost             Float
+  breakdown        Json?    // optional, matches in-memory breakdown logs
   createdAt        DateTime @default(now())
 
   Tenant           Tenant   @relation(fields: [tenantId], references: [id])
@@ -118,12 +119,11 @@ model Usage {
 model AdminUser {
   id           String   @id @default(cuid())
   tenantId     String
-  email        String
+  email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
 
   Tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, email])
   @@index([tenantId])
 }
