@@ -13,29 +13,74 @@ app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 4000;
 
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.SESSION_SECRET || 'change-me';
+const COOKIE_NAME = 'admin_session';
+
+function setSessionCookie(res, payload) {
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+  res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: 'Lax', maxAge: 1000*60*60*24*7 });
+}
+
+function readSession(req) {
+  const t = req.cookies?.[COOKIE_NAME];
+  if (!t) return null;
+  try { return jwt.verify(t, JWT_SECRET); } catch { return null; }
+}
+
+function requireAuth(req, res, next) {
+  // If a customer key is set, we still allow session-based auth:
+  // gate() runs earlier; it will pass when either key is valid OR req.user is set.
+  const sess = readSession(req);
+  if (!sess) return res.status(401).json({ error: 'auth_required' });
+  req.user = sess; // { adminUserId, tenantId, email }
+  next();
+}
 
 // --- simple auth gate (optional) ---
 function gate(req, res, next) {
   const key = process.env.CUSTOMER_KEY;
-  if (!key) return next(); // gate off if no key set
+  if (!key) return next();                 // gate off if no key set
+
+  // ✅ allow logged-in admins without requiring the URL key
+  if (readSession(req)) return next();
+
   const provided = req.query.key || req.get('x-customer-key');
   if (provided === key) return next();
   return res.status(401).send('Unauthorized');
 }
 
+
 app.use('/static', express.static(path.join(__dirname, 'static')));
 app.use(express.json());
 app.use(cookieParser());
 
-
-// apply gate to portal + APIs
-app.use(['/portal', '/api/portal'], gate);
+// allow either a valid session cookie OR the CUSTOMER_KEY
+function authOrKey(req, res, next) {
+  if (readSession(req)) return next();     // logged-in admin
+  return gate(req, res, next);             // else require key
+}
+app.use('/api/portal', authOrKey);
 
 // serve the portal
 app.get('/', (req, res) => res.redirect('/portal'));
 app.get('/portal', (req, res) =>
   res.sendFile(path.join(__dirname, 'views', 'portal.html'))
 );
+
+app.get('/api/me', (req, res) => {
+  const sess = readSession(req);
+  if (!sess) return res.status(401).json({ error: 'auth_required' });
+  res.json(sess);
+});
+
+app.post('/api/logout', (req, res) => {
+  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'Lax' });
+  res.json({ ok: true });
+});
+
 
 // Resolve tenant for admin:
 function resolveAdminTenant(req) {
@@ -89,6 +134,23 @@ app.post('/api/current-tenant', async (req, res) => {
     httpOnly: true, sameSite: 'Lax', maxAge: 1000 * 60 * 60 * 24 * 30
   });
   res.json({ ok: true, tenant: t });
+});
+
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  const tenant = resolveAdminTenant(req);
+
+  const user = await prisma.adminUser.findFirst({
+    where: { email, tenantId: tenant }
+  });
+
+  if (!user) return res.status(401).json({ error: 'invalid_credentials' });
+
+  const valid = await bcrypt.compare(password, user.passwordHash);
+  if (!valid) return res.status(401).json({ error: 'invalid_credentials' });
+
+  setSessionCookie(res, { adminUserId: user.id, tenantId: user.tenantId, email: user.email });
+  res.json({ ok: true });
 });
 
 // server.js (the admin/portal server)
