@@ -737,18 +737,25 @@ window.addEventListener('resize', drawSpark);
 
 (async function start(){
   await loadConfig();
-  drawSpark();
 
-  // Check session first; if not logged in, show login and stop here.
+  // ✅ Only call drawSpark if it exists and the canvas is present
+  if (typeof drawSpark === "function" && document.getElementById("spark")) {
+    drawSpark();
+  }
+
+  // 🔐 Check session first; if not logged in, show login and stop here.
   const authed = await checkSession();
   if (!authed) return;
 
-  // Now that we’re authed, load the data and start loops
+  // 📊 Now that we’re authed, load the data and start loops
   loadData();
   loadUsageCharts();
   await loadPremiumModule();
+
   setInterval(loadData, 5000);
   setInterval(loadUsageCharts, 10000);
 })();
 
+
 </script>
+
