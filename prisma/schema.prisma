@@ -23,6 +23,7 @@ model Tenant {
   Lead            Lead[]
   Metric          Metric[]
   Usage           Usage[]
+  AdminUsers      AdminUser[]
 }
 
 model Conversation {
