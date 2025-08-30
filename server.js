@@ -36,7 +36,6 @@ function readSession(req) {
 }
 
 function requireAuth(req, res, next) {
-  // If a customer key is set, we still allow session-based auth:
   // gate() runs earlier; it will pass when either key is valid OR req.user is set.
   const sess = readSession(req);
   if (!sess) return res.status(401).json({ error: 'auth_required' });
@@ -44,30 +43,14 @@ function requireAuth(req, res, next) {
   next();
 }
 
-// --- simple auth gate (optional) ---
-function gate(req, res, next) {
-  const key = process.env.CUSTOMER_KEY;
-  if (!key) return next();                 // gate off if no key set
 
-  // ✅ allow logged-in admins without requiring the URL key
-  if (readSession(req)) return next();
-
-  const provided = req.query.key || req.get('x-customer-key');
-  if (provided === key) return next();
-  return res.status(401).send('Unauthorized');
-}
 
 
 app.use('/static', express.static(path.join(__dirname, 'static')));
 app.use(express.json());
 app.use(cookieParser());
+app.use('/api/portal', requireAuth);
 
-// allow either a valid session cookie OR the CUSTOMER_KEY
-function authOrKey(req, res, next) {
-  if (readSession(req)) return next();     // logged-in admin
-  return gate(req, res, next);             // else require key
-}
-app.use('/api/portal', authOrKey);
 
 // serve the portal
 app.get('/', (req, res) => res.redirect('/portal'));
@@ -75,53 +58,35 @@ app.get('/portal', (req, res) =>
   res.sendFile(path.join(__dirname, 'views', 'portal.html'))
 );
 
-
 // --- POST /api/login ---
 app.post('/api/login', async (req, res) => {
   try {
-    const { tenant } = req.query;
     const { email, password } = req.body;
-
-    const t = String(tenant || '').toLowerCase().trim();
-    if (!t || !email || !password) {
+    if (!email || !password) {
       return res.status(400).json({ error: 'missing_fields' });
     }
 
-
-    if (!tenant) {
-      return res.status(400).json({ error: 'missing_tenant' });
-    }
-
-    // find user by tenant + email
+    // find user by email (unique across all tenants)
     const user = await prisma.adminUser.findUnique({
-      where: {
-        tenantId_email: {
-          tenantId: tenant,
-          email: email.toLowerCase()
-        }
-      }
+      where: { email: email.toLowerCase() }
     });
 
-    if (!user) {
-      return res.status(401).json({ error: 'invalid_credentials' });
-    }
+    if (!user) return res.status(401).json({ error: 'invalid_credentials' });
 
-    // check password
     const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) {
-      return res.status(401).json({ error: 'invalid_credentials' });
-    }
+    if (!valid) return res.status(401).json({ error: 'invalid_credentials' });
 
     // ✅ login success — set session cookie
     const payload = { adminUserId: user.id, tenantId: user.tenantId, email: user.email };
     setSessionCookie(res, payload);
-    res.json({ ok: true });
 
+    res.json({ ok: true, tenantId: user.tenantId });
   } catch (err) {
     console.error('Login error', err);
     res.status(500).json({ error: 'server_error' });
   }
 });
+
 
 // --- POST /api/logout ---
 app.post('/api/logout', requireAuth, (req, res) => {
@@ -131,38 +96,20 @@ app.post('/api/logout', requireAuth, (req, res) => {
 
 // --- GET /api/me (check session) ---
 app.get('/api/me', requireAuth, (req, res) => {
-  const token = req.cookies?.[COOKIE_NAME];
-  if (!token) return res.status(401).json({ error: 'auth_required' });
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    res.json(decoded); // { adminUserId, tenantId, email }
-  } catch {
-    return res.status(401).json({ error: 'auth_required' });
-  }
+  res.json(req.user); // { adminUserId, tenantId, email }
 });
 
 
-// Resolve tenant for admin:
+
+// Resolve tenant for admin (from session)
 function resolveAdminTenant(req) {
-  const clean = v => String(v || '').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-
-  const fromCookie = clean(req.cookies?.admin_tenant);
-  if (fromCookie) return fromCookie;
-
-  const fromHeader = clean(req.get('x-tenant'));
-  if (fromHeader) return fromHeader;
-
-  // TEMP compatibility with old clients
-  const fromQuery = clean(req.query?.tenant);
-  if (fromQuery) return fromQuery;
-
-  const host = String(req.hostname || '').toLowerCase();
-  const sub = clean(host.split('.')[0]);
-  if (sub && !['www','localhost','127','admin'].includes(sub)) return sub;
-
+  // ✅ If session is present, always use tenantId from it
+  if (req.user && req.user.tenantId) {
+    return String(req.user.tenantId).toLowerCase();
+  }
   return 'default';
 }
+
 
 
 // List tenants for picker
@@ -174,28 +121,6 @@ app.get('/api/tenants', requireAuth, async (_req, res) => {
   res.json(rows);
 });
 
-// Choose current tenant (stored in httpOnly cookie)
-app.post('/api/current-tenant', requireAuth, async (req, res) => {
-  const sub = String(req.body?.subdomain || '').toLowerCase();
-  if (!sub) return res.status(400).json({ error: 'subdomain_required' });
-
-  const t = await prisma.tenant.findFirst({
-    where: {
-      OR: [
-        { subdomain: sub },
-        { id: sub },
-        { name: { equals: sub, mode: 'insensitive' } }
-      ]
-    },
-    select: { id: true, name: true, subdomain: true }
-  });
-  if (!t) return res.status(404).json({ error: 'tenant_not_found' });
-
-  res.cookie('admin_tenant', t.subdomain || t.id, {
-    httpOnly: true, sameSite: 'Lax', maxAge: 1000 * 60 * 60 * 24 * 30
-  });
-  res.json({ ok: true, tenant: t });
-});
 
 
 
@@ -466,7 +391,6 @@ function addConversation(state, sessionId, data, tenant) {
 // ------------------------------------------------------
 app.listen(PORT, () => {
   console.log(`✅ Portal running at http://localhost:${PORT}/portal`);
-  if (process.env.CUSTOMER_KEY) {
-    console.log('🔐 Auth enabled: supply ?key=YOUR_KEY or header x-customer-key: YOUR_KEY');
-  }
 });
+
+
