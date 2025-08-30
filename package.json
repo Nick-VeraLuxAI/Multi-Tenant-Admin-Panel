@@ -4,8 +4,8 @@
   "description": "To Run: mkdir -p views # save the HTML above as views/portal.html # save server.js at project root",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +15,11 @@
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
-    "prisma": "^6.15.0"
+    "prisma": "^6.15.0",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
   }
 }
