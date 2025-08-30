@@ -16,12 +16,17 @@ const PORT = process.env.PORT || 4000;
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.SESSION_SECRET || 'change-me';
-const COOKIE_NAME = 'admin_session';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const COOKIE_NAME = 'solomon_session';
 
 function setSessionCookie(res, payload) {
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-  res.cookie(COOKIE_NAME, token, { httpOnly: true, sameSite: 'Lax', maxAge: 1000*60*60*24*7 });
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: 'Lax',
+    secure: process.env.NODE_ENV === 'production',  // ✅ only over HTTPS in prod
+    maxAge: 1000*60*60*24*7
+  });
 }
 
 function readSession(req) {
@@ -70,15 +75,70 @@ app.get('/portal', (req, res) =>
   res.sendFile(path.join(__dirname, 'views', 'portal.html'))
 );
 
-app.get('/api/me', (req, res) => {
-  const sess = readSession(req);
-  if (!sess) return res.status(401).json({ error: 'auth_required' });
-  res.json(sess);
+// --- POST /api/login ---
+app.post('/api/login', async (req, res) => {
+  try {
+    const { tenant } = req.query;
+    const { email, password } = req.body;
+
+    const t = String(tenant || '').toLowerCase().trim();
+    if (!t || !email || !password) {
+      return res.status(400).json({ error: 'missing_fields' });
+    }
+
+
+    if (!tenant) {
+      return res.status(400).json({ error: 'missing_tenant' });
+    }
+
+    // find user by tenant + email
+    const user = await prisma.adminUser.findUnique({
+      where: {
+        tenantId_email: {
+          tenantId: tenant,
+          email: email.toLowerCase()
+        }
+      }
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // check password
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // ✅ login success — set session cookie
+    const payload = { adminUserId: user.id, tenantId: user.tenantId, email: user.email };
+    setSessionCookie(res, payload);
+    res.json({ ok: true });
+
+  } catch (err) {
+    console.error('Login error', err);
+    res.status(500).json({ error: 'server_error' });
+  }
 });
 
-app.post('/api/logout', (req, res) => {
-  res.clearCookie(COOKIE_NAME, { httpOnly: true, sameSite: 'Lax' });
+// --- POST /api/logout ---
+app.post('/api/logout', requireAuth, (req, res) => {
+  res.clearCookie(COOKIE_NAME);
   res.json({ ok: true });
+});
+
+// --- GET /api/me (check session) ---
+app.get('/api/me', requireAuth, (req, res) => {
+  const token = req.cookies?.[COOKIE_NAME];
+  if (!token) return res.status(401).json({ error: 'auth_required' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    res.json(decoded); // { adminUserId, tenantId, email }
+  } catch {
+    return res.status(401).json({ error: 'auth_required' });
+  }
 });
 
 
@@ -105,7 +165,7 @@ function resolveAdminTenant(req) {
 
 
 // List tenants for picker
-app.get('/api/tenants', async (_req, res) => {
+app.get('/api/tenants', requireAuth, async (_req, res) => {
   const rows = await prisma.tenant.findMany({
     select: { id: true, name: true, subdomain: true, plan: true },
     orderBy: { name: 'asc' }
@@ -114,7 +174,7 @@ app.get('/api/tenants', async (_req, res) => {
 });
 
 // Choose current tenant (stored in httpOnly cookie)
-app.post('/api/current-tenant', async (req, res) => {
+app.post('/api/current-tenant', requireAuth, async (req, res) => {
   const sub = String(req.body?.subdomain || '').toLowerCase();
   if (!sub) return res.status(400).json({ error: 'subdomain_required' });
 
@@ -136,25 +196,10 @@ app.post('/api/current-tenant', async (req, res) => {
   res.json({ ok: true, tenant: t });
 });
 
-app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  const tenant = resolveAdminTenant(req);
 
-  const user = await prisma.adminUser.findFirst({
-    where: { email, tenantId: tenant }
-  });
-
-  if (!user) return res.status(401).json({ error: 'invalid_credentials' });
-
-  const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) return res.status(401).json({ error: 'invalid_credentials' });
-
-  setSessionCookie(res, { adminUserId: user.id, tenantId: user.tenantId, email: user.email });
-  res.json({ ok: true });
-});
 
 // server.js (the admin/portal server)
-app.get('/api/portal/premium', (req, res) => {
+app.get('/api/portal/premium', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const state = getTenantState(tenant);
 
@@ -228,28 +273,28 @@ function metrics(state) {
 }
 
 // -------------------- APIs (read) --------------------
-app.get('/api/portal/metrics', (req, res) => {
+app.get('/api/portal/metrics', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const data = metrics(getTenantState(tenant));
   console.log(`📤 [${tenant}] Sending metrics:`, data);
   res.json(data);
 });
 
-app.get('/api/portal/events', (req, res) => {
+app.get('/api/portal/events', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const events = getTenantState(tenant).events;
   console.log(`📤 [${tenant}] Sending ${events.length} events`);
   res.json(events);
 });
 
-app.get('/api/portal/errors', (req, res) => {
+app.get('/api/portal/errors', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const errors = getTenantState(tenant).errors;
   console.log(`📤 [${tenant}] Sending ${errors.length} errors`);
   res.json(errors);
 });
 
-app.get('/api/portal/usage', (req, res) => {
+app.get('/api/portal/usage', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const state = getTenantState(tenant);
   console.log(`📤 [${tenant}] Sending usage: current=`, state.usage, `history count=${state.usages.length}`);
@@ -261,14 +306,14 @@ app.get('/api/portal/health', (req, res) => {
   res.json({ ok: true, ts: Date.now() });
 });
 
-app.get('/api/portal/metrics-log', (req, res) => {
+app.get('/api/portal/metrics-log', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const metricsLog = getTenantState(tenant).metrics;
   console.log(`📤 [${tenant}] Sending metrics-log (${metricsLog.length} entries)`);
   res.json(metricsLog);
 });
 
-app.get('/api/portal/conversations', (req, res) => {
+app.get('/api/portal/conversations', requireAuth, (req, res) => {
   const tenant = resolveAdminTenant(req);
   const conversations = getTenantState(tenant).conversations;
   console.log(`📤 [${tenant}] Sending conversations: ${Object.keys(conversations).length} sessions`);
