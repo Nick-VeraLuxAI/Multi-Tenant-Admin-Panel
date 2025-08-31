@@ -14,16 +14,18 @@ model Tenant {
   plan            String   @default("basic")
   createdAt       DateTime @default(now())
   subdomain       String?  @unique
-  branding        Json?
-  settings        Json?
 
-  Conversation    Conversation[]
-  ConversationLog ConversationLog[]
-  Event           Event[]
-  Lead            Lead[]
-  Metric          Metric[]
-  Usage           Usage[]
-  AdminUser       AdminUser[]
+  branding        Json?    @default("{}")
+  settings        Json?    @default("{}")
+
+  // Relationships
+  Conversation    Conversation[]   @relation(onDelete: Cascade)
+  ConversationLog ConversationLog[] @relation(onDelete: Cascade)
+  Event           Event[]           @relation(onDelete: Cascade)
+  Lead            Lead[]            @relation(onDelete: Cascade)
+  Metric          Metric[]          @relation(onDelete: Cascade)
+  Usage           Usage[]           @relation(onDelete: Cascade)
+  AdminUser       AdminUser[]       @relation(onDelete: Cascade)
 }
 
 model Conversation {
@@ -33,7 +35,7 @@ model Conversation {
   startedAt DateTime @default(now())
   endedAt   DateTime?
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   Message   Message[]
 
   @@unique([tenantId, sessionId])
@@ -47,7 +49,7 @@ model ConversationLog {
   at        DateTime @default(now())
   data      Json
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
 }
@@ -59,7 +61,8 @@ model Event {
   content   String
   createdAt DateTime @default(now())
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   @@index([tenantId])
 }
 
@@ -73,7 +76,8 @@ model Lead {
   tags      String[]
   createdAt DateTime @default(now())
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   @@index([tenantId])
 }
 
@@ -86,7 +90,8 @@ model Message {
   tokensOut      Int          @default(0)
   createdAt      DateTime     @default(now())
 
-  Conversation   Conversation @relation(fields: [conversationId], references: [id])
+  Conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
   @@index([conversationId])
 }
 
@@ -97,7 +102,8 @@ model Metric {
   value     Float
   createdAt DateTime @default(now())
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   @@index([tenantId])
 }
 
@@ -112,18 +118,21 @@ model Usage {
   breakdown        Json?    // optional, matches in-memory breakdown logs
   createdAt        DateTime @default(now())
 
-  Tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  Tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   @@index([tenantId])
 }
 
 model AdminUser {
   id           String   @id @default(cuid())
   tenantId     String
-  email        String   @unique
+  email        String
   passwordHash String
   createdAt    DateTime @default(now())
 
   Tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@unique([tenantId, email]) // unique per tenant
 }
+
