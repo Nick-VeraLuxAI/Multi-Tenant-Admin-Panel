@@ -99,26 +99,35 @@
   <div class="brand">
     <img id="brand-logo" alt="" style="display:none">
     <span id="brand-text"></span>
-    <button id="logoutBtn" style="margin-left:auto; padding:6px 10px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:8px; cursor:pointer; display:none">
-  Logout
-</button>
 
+    <a href="/pricing" 
+       style="margin-left:auto; padding:6px 10px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:8px; cursor:pointer; text-decoration:none;">
+      Pricing
+    </a>
+
+    <button id="logoutBtn" 
+       style="margin-left:10px; padding:6px 10px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:8px; cursor:pointer; display:none">
+      Logout
+    </button>
   </div>
 </header>
 
-<!-- 🔐 Login panel (hidden when authed) -->
-<div id="login" style="display:none; max-width:420px; margin:40px auto; background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 30px #0006; padding:20px">
-  <h2 style="margin:0 0 12px 0">Admin Login</h2>
-  <form id="loginForm" class="grid" style="gap:10px">
-  <input type="email" id="email" name="email" autocomplete="username" placeholder="Email" required
-        style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
-  <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Password" required
-        style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
-    <button type="submit" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer">
-      Sign In
-    </button>
-  </form>
-  <p id="loginError" style="color:var(--bad); margin-top:8px"></p>
+<!-- Fullscreen flex wrapper -->
+<div style="min-height:100vh; display:flex; align-items:center; justify-content:center;">
+  <!-- 🔐 Login panel (hidden when authed) -->
+  <div id="login" style="display:none; width:100%; max-width:420px; background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 30px #0006; padding:20px">
+    <h2 style="margin:0 0 12px 0">Admin Login</h2>
+    <form id="loginForm" class="grid" style="gap:10px">
+      <input type="email" id="email" name="email" autocomplete="username" placeholder="Email" required
+            style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
+      <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Password" required
+            style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
+      <button type="submit" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer">
+        Sign In
+      </button>
+    </form>
+    <p id="loginError" style="color:var(--bad); margin-top:8px"></p>
+  </div>
 </div>
 
 <!-- 📊 Dashboard (hidden until authed) -->
@@ -241,15 +250,18 @@ function show(view){
     setTimeout(() => $('email')?.focus(), 0);
     const err = $('loginError');
     if (err) err.textContent = '';
-    $('password')?.value = '';
-    $('loginForm')?.reset();
+    const pwd = $('password');           // 👈 fix here
+    if (pwd) pwd.value = '';
+    const form = $('loginForm');         // also safe
+    if (form) form.reset();
   }
 }
+
 
 // 🔐 Check active session
 async function checkSession(){
   try {
-    const r = await fetch('/api/me');
+    const r = await fetch('/api/me', { credentials: 'include' });
     if (r.ok) {
       const user = await r.json();
       TENANT = user.tenantId;   // ✅ tenant from session
@@ -748,16 +760,40 @@ async function loadUsageCharts() {
 window.addEventListener('resize', drawSpark);
 
 (async function start(){
-  await loadConfig();
-  drawSpark();
+  try {
+    await loadConfig();
+    drawSpark();
 
-  const authed = await checkSession();
-  if (!authed) return;
+    const authed = await checkSession();
+    console.log("checkSession returned:", authed);
 
-  loadData();
-  loadUsageCharts();
-  await loadPremiumModule();
-  setInterval(loadData, 5000);
-  setInterval(loadUsageCharts, 10000);
+    if (!authed) {
+      console.log("❌ No active session, showing login form");
+      show('login');   // 👈 force login visible
+      return;
+    }
+
+    console.log("✅ Session found, loading dashboard");
+    loadData();
+    loadUsageCharts();
+    await loadPremiumModule();
+
+    setInterval(loadData, 5000);
+    setInterval(loadUsageCharts, 10000);
+  } catch (err) {
+    console.error("❌ Startup error:", err);
+    show('login');   // 👈 fallback if anything breaks
+  }
 })();
+// 👇 Force the login form to show if nothing else loads
+window.addEventListener('DOMContentLoaded', () => {
+  const loginEl = document.getElementById("login");
+  const dashEl  = document.getElementById("dashboard");
+  if (loginEl && dashEl) {
+    loginEl.style.display = "";
+    dashEl.style.display = "none";
+    console.log("✅ Forced login visible on first load");
+  }
+});
+
 </script>
