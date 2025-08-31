@@ -51,6 +51,9 @@ app.use(express.json());
 app.use(cookieParser());
 app.use('/api/portal', requireAuth);
 
+app.get('/pricing', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'pricing.html'));
+});
 
 // serve the portal
 app.get('/', (req, res) => res.redirect('/portal'));
@@ -392,5 +395,4 @@ function addConversation(state, sessionId, data, tenant) {
 app.listen(PORT, () => {
   console.log(`✅ Portal running at http://localhost:${PORT}/portal`);
 });
-
 
