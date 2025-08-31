@@ -8,24 +8,24 @@ datasource db {
 }
 
 model Tenant {
-  id              String   @id @default(cuid())
-  name            String
-  apiKey          String   @unique
-  plan            String   @default("basic")
-  createdAt       DateTime @default(now())
-  subdomain       String?  @unique
+  id        String   @id @default(cuid())
+  name      String
+  apiKey    String   @unique
+  plan      String   @default("basic")
+  createdAt DateTime @default(now())
+  subdomain String?  @unique
 
-  branding        Json?    @default("{}")
-  settings        Json?    @default("{}")
+  branding  Json?    @default("{}")
+  settings  Json?    @default("{}")
 
-  // Relationships
-  Conversation    Conversation[]   @relation(onDelete: Cascade)
-  ConversationLog ConversationLog[] @relation(onDelete: Cascade)
-  Event           Event[]           @relation(onDelete: Cascade)
-  Lead            Lead[]            @relation(onDelete: Cascade)
-  Metric          Metric[]          @relation(onDelete: Cascade)
-  Usage           Usage[]           @relation(onDelete: Cascade)
-  AdminUser       AdminUser[]       @relation(onDelete: Cascade)
+  // Relationships (no onDelete here)
+  Conversation    Conversation[]
+  ConversationLog ConversationLog[]
+  Event           Event[]
+  Lead            Lead[]
+  Metric          Metric[]
+  Usage           Usage[]
+  AdminUser       AdminUser[]
 }
 
 model Conversation {
@@ -115,7 +115,7 @@ model Usage {
   completionTokens Int
   cachedTokens     Int
   cost             Float
-  breakdown        Json?    // optional, matches in-memory breakdown logs
+  breakdown        Json?
   createdAt        DateTime @default(now())
 
   Tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -135,4 +135,3 @@ model AdminUser {
   @@index([tenantId])
   @@unique([tenantId, email]) // unique per tenant
 }
-
