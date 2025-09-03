@@ -18,11 +18,30 @@
     background:linear-gradient(135deg,var(--bg),var(--bg2));
     color:var(--text);
   }
-  header {
-    text-align:center; padding:30px 20px;
-  }
+  header { text-align:center; padding:30px 20px; }
   header h1 { margin:0; font-size:2.2rem }
   header p { color:var(--muted); margin:10px 0 0 }
+
+  /* Toggle */
+  .billing-toggle {
+    display:flex; align-items:center; justify-content:center;
+    gap:12px; margin:10px 0 0;
+    color:var(--muted);
+  }
+  .billing-toggle .save { font-weight:700; color:var(--good) }
+  .switch { position:relative; display:inline-block; width:54px; height:28px }
+  .switch input { display:none }
+  .slider {
+    position:absolute; cursor:pointer; inset:0; background:#2a3138; border-radius:999px;
+    transition:.2s; border:1px solid var(--border);
+  }
+  .slider:before {
+    content:""; position:absolute; height:22px; width:22px; left:3px; top:50%;
+    transform:translateY(-50%); background:#fff; border-radius:50%; transition:.2s;
+  }
+  input:checked + .slider { background:var(--accent) }
+  input:checked + .slider:before { transform:translate(26px, -50%) }
+
   .pricing-grid {
     display:grid; gap:20px; max-width:1200px;
     margin:40px auto; padding:0 20px;
@@ -32,40 +51,77 @@
     background:var(--card); border:1px solid var(--border);
     border-radius:16px; padding:24px;
     box-shadow:0 10px 30px #0006;
-    display:flex; flex-direction:column;
-    justify-content:space-between;
-    transition:transform 0.2s ease, box-shadow 0.2s ease;
+    display:flex; flex-direction:column; justify-content:space-between;
+    transition:transform .2s ease, box-shadow .2s ease;
   }
   .plan:hover { transform:translateY(-6px); box-shadow:0 16px 40px #0009; }
   .plan h2 { margin:0 0 10px 0; font-size:1.4rem; }
   .price { font-size:1.8rem; font-weight:700; margin:10px 0; }
+  .sub { font-size:.9rem; color:var(--muted); margin-top:-6px }
   ul { list-style:none; padding:0; margin:20px 0; }
   li { margin:8px 0; color:var(--muted); }
   .cta {
-    margin-top:auto; padding:12px; border:none;
-    border-radius:10px; cursor:pointer;
-    background:var(--accent); color:#fff;
-    font-size:1rem; font-weight:600;
-    transition:background 0.2s ease;
+    margin-top:auto; padding:12px; border:none; border-radius:10px; cursor:pointer;
+    background:var(--accent); color:#fff; font-size:1rem; font-weight:600; transition:background .2s ease;
   }
   .cta:hover { background:#2a3138; }
-  footer {
-    text-align:center; padding:20px; color:var(--muted);
+  .fineprint { font-size:.8rem; color:var(--muted); margin-top:8px }
+
+  /* Compare table */
+  .compare {
+    max-width:1200px; margin:20px auto 50px; padding:0 20px;
   }
+  .compare h3 { margin:10px 0 12px; font-size:1.4rem; }
+  table {
+    width:100%; border-collapse:collapse; background:var(--card);
+    border:1px solid var(--border); border-radius:14px; overflow:hidden;
+    box-shadow:0 10px 30px #0006;
+  }
+  thead th {
+    background:rgba(0,0,0,0.35); color:var(--muted);
+    text-align:left; font-weight:700; padding:12px 14px; border-bottom:1px solid var(--border);
+  }
+  tbody td, tbody th {
+    padding:12px 14px; border-bottom:1px solid rgba(201,162,39,.25);
+    vertical-align:top;
+  }
+  tbody tr:last-child td, tbody tr:last-child th { border-bottom:none; }
+  .col-plan { width:18%; }
+  .check { color:var(--good); font-weight:700; }
+  .dash { color:var(--muted); }
+  footer { text-align:center; padding:20px; color:var(--muted); }
 </style>
 </head>
 <body>
 <header>
   <h1>Simple, Transparent Pricing</h1>
   <p>Choose the plan that fits your business — scale anytime</p>
+
+  <!-- Monthly ⇄ Annual -->
+  <div class="billing-toggle">
+    <span>Monthly</span>
+    <label class="switch">
+      <input type="checkbox" id="annualToggle" aria-label="Toggle annual billing">
+      <span class="slider"></span>
+    </label>
+    <span>Annual <span class="save">save 2 months</span></span>
+  </div>
 </header>
 
 <div class="pricing-grid">
 
   <!-- Starter -->
-  <div class="plan">
+  <div class="plan" data-plan="starter">
     <h2>🌱 Starter</h2>
-    <div class="price">$149<span style="font-size:0.8rem">/mo</span></div>
+    <div class="price">
+      $<span class="price-amount" data-monthly="199">199</span><span>/mo</span>
+    </div>
+    <div class="sub setup"
+         data-monthly-text="One-time setup $299 (waived with annual)"
+         data-annual-text="Setup waived">
+      One-time setup $299 (waived with annual)
+    </div>
+    <div class="sub billing-note" hidden></div>
     <ul>
       <li>✔ 1 custom Solomon bot</li>
       <li>✔ Persistent conversations</li>
@@ -75,12 +131,21 @@
       <li>✔ Standard support</li>
     </ul>
     <button class="cta">Get Started</button>
+    <div class="fineprint">Usage billed at cost; bring your own OpenAI key or enable pass-through.</div>
   </div>
 
   <!-- Pro -->
-  <div class="plan">
+  <div class="plan" data-plan="pro">
     <h2>🚀 Pro</h2>
-    <div class="price">$299<span style="font-size:0.8rem">/mo</span></div>
+    <div class="price">
+      $<span class="price-amount" data-monthly="449">449</span><span>/mo</span>
+    </div>
+    <div class="sub setup"
+         data-monthly-text="One-time setup $799 (waived with annual)"
+         data-annual-text="Setup waived">
+      One-time setup $799 (waived with annual)
+    </div>
+    <div class="sub billing-note" hidden></div>
     <ul>
       <li>✔ Everything in Starter</li>
       <li>✔ Full analytics dashboard</li>
@@ -90,12 +155,21 @@
       <li>✔ Priority support</li>
     </ul>
     <button class="cta">Upgrade to Pro</button>
+    <div class="fineprint">Monthly includes platform; AI usage at provider rates.</div>
   </div>
 
   <!-- Agency -->
-  <div class="plan">
+  <div class="plan" data-plan="agency">
     <h2>🏢 Agency</h2>
-    <div class="price">$999<span style="font-size:0.8rem">/mo</span></div>
+    <div class="price">
+      $<span class="price-amount" data-monthly="1499">1,499</span><span>/mo</span>
+    </div>
+    <div class="sub setup"
+         data-monthly-text="Setup $3,000 incl. first 5 tenants (+$200/extra tenant)"
+         data-annual-text="Setup waived for annual (incl. first 5 tenants)">
+      Setup $3,000 incl. first 5 tenants (+$200/extra tenant)
+    </div>
+    <div class="sub billing-note" hidden></div>
     <ul>
       <li>✔ Manage up to 10 tenants</li>
       <li>✔ White-label dashboard</li>
@@ -104,12 +178,14 @@
       <li>✔ Premium support</li>
     </ul>
     <button class="cta">Talk to Sales</button>
+    <div class="fineprint">Add’l tenants: +$100/mo each beyond 10.</div>
   </div>
 
   <!-- Enterprise -->
-  <div class="plan">
+  <div class="plan" data-plan="enterprise">
     <h2>🏦 Enterprise</h2>
     <div class="price">Custom</div>
+    <div class="sub">Setup via SOW</div>
     <ul>
       <li>✔ Unlimited tenants</li>
       <li>✔ Dedicated deployment</li>
@@ -118,10 +194,182 @@
       <li>✔ Custom integrations (CRM, ERP)</li>
     </ul>
     <button class="cta">Contact Us</button>
+    <div class="fineprint">Annual contracts, SLAs, and compliance available.</div>
   </div>
 
 </div>
 
+<!-- Compare features -->
+<section class="compare">
+  <h3>Compare features</h3>
+  <table>
+    <thead>
+      <tr>
+        <th class="col-plan">Feature</th>
+        <th>Starter</th>
+        <th>Pro</th>
+        <th>Agency</th>
+        <th>Enterprise</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th>Tenants included</th>
+        <td>1</td>
+        <td>1</td>
+        <td>10</td>
+        <td>Unlimited</td>
+      </tr>
+      <tr>
+        <th>Analytics</th>
+        <td>Basic KPIs</td>
+        <td>Full dashboard</td>
+        <td>Multi-tenant analytics</td>
+        <td>Enterprise analytics</td>
+      </tr>
+      <tr>
+        <th>Token usage & cost tracking</th>
+        <td><span class="dash">—</span></td>
+        <td><span class="check">✔</span></td>
+        <td><span class="check">✔</span></td>
+        <td><span class="check">✔</span></td>
+      </tr>
+      <tr>
+        <th>Google Drive OAuth</th>
+        <td><span class="dash">—</span></td>
+        <td><span class="check">✔</span></td>
+        <td><span class="check">✔</span></td>
+        <td><span class="check">✔</span></td>
+      </tr>
+      <tr>
+        <th>Lead capture & tagging</th>
+        <td>Lead capture + email</td>
+        <td>Advanced tagging</td>
+        <td>Advanced tagging</td>
+        <td>Advanced + custom taxonomies</td>
+      </tr>
+      <tr>
+        <th>Branding</th>
+        <td>Per-tenant branding</td>
+        <td>Per-tenant branding</td>
+        <td>White-label portal</td>
+        <td>Dedicated & white-label</td>
+      </tr>
+      <tr>
+        <th>API access</th>
+        <td><span class="dash">—</span></td>
+        <td><span class="dash">—</span></td>
+        <td><span class="check">✔</span></td>
+        <td><span class="check">✔</span></td>
+      </tr>
+      <tr>
+        <th>Support</th>
+        <td>Standard</td>
+        <td>Priority</td>
+        <td>Premium</td>
+        <td>SLA / Dedicated</td>
+      </tr>
+      <tr>
+        <th>Additional tenants</th>
+        <td><span class="dash">—</span></td>
+        <td><span class="dash">—</span></td>
+        <td>+$100/mo each beyond 10</td>
+        <td>Custom</td>
+      </tr>
+      <tr>
+        <th>Setup fee</th>
+        <td class="compare-setup" data-plan="starter" data-monthly="$299 (waived with annual)" data-annual="Setup waived">$299 (waived with annual)</td>
+        <td class="compare-setup" data-plan="pro"     data-monthly="$799 (waived with annual)" data-annual="Setup waived">$799 (waived with annual)</td>
+        <td class="compare-setup" data-plan="agency"  data-monthly="Setup $3,000 incl. 5 tenants (+$200/extra)" data-annual="Setup waived (incl. 5 tenants)">Setup $3,000 incl. 5 tenants (+$200/extra)</td>
+        <td class="compare-setup" data-plan="enterprise" data-monthly="Setup via SOW" data-annual="Setup via SOW">Setup via SOW</td>
+      </tr>
+      <tr>
+        <th>Annual billing total</th>
+        <td class="compare-annual" data-plan="starter">—</td>
+        <td class="compare-annual" data-plan="pro">—</td>
+        <td class="compare-annual" data-plan="agency">—</td>
+        <td class="compare-annual" data-plan="enterprise">Custom</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
 <footer>© 2025 Solomon AI · All Rights Reserved</footer>
+
+<script>
+  // Annual = 10× monthly billed upfront (2 months free).
+  const toggle = document.getElementById('annualToggle');
+
+  function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:0}); }
+
+  function getPlanMonthly(planKey){
+    const card = document.querySelector(`.plan[data-plan="${planKey}"]`);
+    const amtEl = card && card.querySelector('.price-amount');
+    if(!amtEl) return null;
+    return parseFloat(amtEl.dataset.monthly);
+  }
+
+  function updateCompare(annual){
+    // Setup fee row
+    document.querySelectorAll('.compare-setup').forEach(cell=>{
+      const monthlyText = cell.getAttribute('data-monthly');
+      const annualText  = cell.getAttribute('data-annual');
+      cell.textContent  = annual ? annualText : monthlyText;
+    });
+
+    // Annual billing totals
+    document.querySelectorAll('.compare-annual').forEach(cell=>{
+      const plan = cell.getAttribute('data-plan');
+      if(!plan || plan === 'enterprise'){ cell.textContent = annual ? 'Custom' : '—'; return; }
+      const monthly = getPlanMonthly(plan);
+      if(!monthly || isNaN(monthly)){ cell.textContent = annual ? '—' : '—'; return; }
+      if(annual){
+        const billed = Math.round(monthly * 10);
+        cell.textContent = `$${fmt(billed)}/yr`;
+      } else {
+        cell.textContent = '—';
+      }
+    });
+  }
+
+  function updateCards(annual){
+    document.querySelectorAll('.plan').forEach(plan => {
+      const amtEl = plan.querySelector('.price-amount');
+      const setupEl = plan.querySelector('.setup');
+      const noteEl = plan.querySelector('.billing-note');
+      if(!amtEl) return;
+      const monthly = parseFloat(amtEl.dataset.monthly);
+      if(isNaN(monthly)) return;
+
+      if(annual){
+        const billed = Math.round(monthly * 10);   // billed per year
+        const perMo  = Math.round(billed / 12);    // average per month
+        amtEl.textContent = fmt(perMo);
+        if(noteEl){
+          noteEl.textContent = `Billed $${fmt(billed)}/yr (2 months free)`;
+          noteEl.hidden = false;
+        }
+        if(setupEl && setupEl.dataset.annualText){
+          setupEl.textContent = setupEl.dataset.annualText;
+        }
+      } else {
+        amtEl.textContent = fmt(monthly);
+        if(noteEl){ noteEl.hidden = true; noteEl.textContent = ''; }
+        if(setupEl && setupEl.dataset.monthlyText){
+          setupEl.textContent = setupEl.dataset.monthlyText;
+        }
+      }
+    });
+  }
+
+  function updatePrices(){
+    const annual = toggle.checked;
+    updateCards(annual);
+    updateCompare(annual);
+  }
+
+  toggle.addEventListener('change', updatePrices);
+  updatePrices();
+</script>
 </body>
 </html>
