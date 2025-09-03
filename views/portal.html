@@ -6,9 +6,17 @@
 <title>Loading…</title>
 <style>
   :root{
-    /* Safe defaults; overridden by config */
-    --bg:#2E7D5B; --bg2:#C9A227; --card:#16412e; --text:#e9ecf1; --muted:#a6accd;
-    --accent:#444C56; --good:#2ecc71; --warn:#f1c40f; --bad:#e74c3c; --border:#C9A227;
+    /* Neutral → Earth fallbacks; DB branding will override */
+    --bg:#A68A64;   /* warm sand */
+    --bg2:#B7B7A4;  /* sage gray */
+    --card:#3D3A2E; /* deep olive */
+    --text:#ECEBE4; /* parchment */
+    --muted:#CFCBBF;
+    --accent:#6B705C;
+    --good:#2ECC71;
+    --warn:#F1C40F;
+    --bad:#E74C3C;
+    --border:#D9D6CE;
   }
   *{box-sizing:border-box}
   body{margin:0;background:linear-gradient(135deg,var(--bg),var(--bg2));color:var(--text);font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial}
@@ -276,58 +284,105 @@ async function checkSession(){
 // 🔐 Login submit
 document.addEventListener('DOMContentLoaded', () => {
   const form = $('loginForm');
-  if (form) {
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      $('loginError').textContent = '';
+  if (!form) return;
 
-      const email = $('email').value.trim();
-      const password = $('password').value;
-      const btn = form.querySelector('button[type="submit"]');
+  // Utility to ensure a tenant picker exists (creates one if needed)
+  async function ensureTenantPicker(tenants = []) {
+    let pick = document.getElementById('tenantHint');
+    if (pick) return pick;
 
-      btn.disabled = true;
-      btn.textContent = 'Signing in...';
+    if (!Array.isArray(tenants) || tenants.length === 0) return null;
 
-      try {
-        const res = await fetch(`/api/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
-        });
+    pick = document.createElement('select');
+    pick.id = 'tenantHint';
+    pick.name = 'tenantHint';
+    pick.required = true;
+    pick.style.cssText =
+      'padding:10px;border-radius:8px;border:1px solid var(--border);background:#0003;color:var(--text)';
+
+    const opt0 = document.createElement('option');
+    opt0.value = '';
+    opt0.textContent = 'Select tenant…';
+    pick.appendChild(opt0);
+
+    tenants.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t.id; // or t.subdomain if your server expects that
+      opt.textContent = t.name + (t.subdomain ? ` (${t.subdomain})` : '');
+      pick.appendChild(opt);
+    });
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+    form.insertBefore(pick, submitBtn);
+
+    return pick;
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('loginError').textContent = '';
+
+    const email = $('email').value.trim();
+    const password = $('password').value;
+    const hintEl = document.getElementById('tenantHint');
+    const tenantHint = hintEl ? hintEl.value : '';
+
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    btn.textContent = 'Signing in...';
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, password, tenantHint })
+      });
+
+      // Handle rate limiting FIRST (this block was unreachable before)
+      if (res.status === 429) {
+        const err = await res.json().catch(() => ({}));
+        $('loginError').textContent =
+          err?.error === 'too_many_attempts'
+            ? 'Too many failed attempts. Try again in a few minutes.'
+            : 'You’re being rate limited. Please wait a moment and try again.';
+        $('password').value = '';
+        return;
+      }
 
         if (res.ok) {
-          // get tenant from /api/me
-          const me = await fetch('/api/me').then(r=>r.json());
+          const me = await fetch('/api/me', { credentials: 'include' }).then(r => r.json());
           TENANT = me.tenantId;
-          show('dashboard');
-          loadData();
-          loadUsageCharts();
+          await bootDashboard();   // single source of truth for init + polling
+          return;
+        } else {
+
+
+        const err = await res.json().catch(() => ({}));
+        if (err?.error === 'tenant_required') {
+          await ensureTenantPicker(err.tenants || []);
+          $('loginError').textContent = 'Please select a tenant and sign in again.';
         } else {
           $('loginError').textContent = 'Invalid email or password.';
-          $('password').value = '';
         }
-      } catch (err) {
-        $('loginError').textContent = 'Network error — please try again.';
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Sign In';
+        $('password').value = '';
       }
-    });
-  }
+    } catch (err) {
+      $('loginError').textContent = 'Network error — please try again.';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    }
+  });
 
   const logout = $('logoutBtn');
   if (logout) {
     logout.addEventListener('click', async () => {
-      await fetch('/api/logout', { method: 'POST' });
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
       location.reload();
     });
   }
 });
-
-
-
-
-
 // Helper: call APIs (uses session cookie + tenant context)
 function api(path, opts = {}) {
   const url = new URL(path, location.origin);
@@ -339,92 +394,96 @@ function api(path, opts = {}) {
 
   return fetch(url, {
     ...opts,
-    credentials: 'include' // ✅ send cookies (important for session auth)
+    credentials: 'include'
   }).then(async (r) => {
     if (r.status === 401) {
-      show('login'); // boot back to login if cookie is missing/expired
+      show('login');
       throw new Error('auth_required');
+    }
+    if (r.status === 429) {
+      // Optional: show a small banner or console log
+      console.warn('Rate limited. Backing off.');
+      throw new Error('rate_limited');
     }
     return r;
   });
+
 }
 
 
-async function loadPremiumModule() {
+async function loadPremiumModule(cfg) {
   try {
-    // ✅ Use the tenant already set from login/session
-    const tenant = TENANT || "default";
+    const config = cfg || window.CONFIG;
+    if (!config?.features?.premium) return; // nothing to do
 
-    const res = await fetch(`/static/config.${tenant}.json?v=${Date.now()}`);
-    if (!res.ok) return;
-    const cfg = await res.json();
-
-    if (cfg.features?.premium) {
-      const el = document.getElementById("premium-sections");
-      if (el) {
-        el.dataset.tenant = tenant;
-        el.dataset.key = cfg.publicKey || '';
-        el.style.display = "";
-      }
-      const s = document.createElement("script");
-      s.src = "/static/premium.js?v=" + Date.now();
-      document.body.appendChild(s);
+    const el = document.getElementById('premium-sections');
+    if (el) {
+      el.dataset.tenant = TENANT || 'default';
+      el.dataset.key = config.publicKey || '';
+      el.style.display = '';
     }
+    const s = document.createElement('script');
+    s.src = '/static/premium.js?v=' + Date.now();
+    document.body.appendChild(s);
   } catch (e) {
-    console.warn("Premium loader failed:", e.message);
+    console.warn('Premium loader failed:', e.message);
   }
 }
 
 // -------------- Brand loader (config.json) --------------
-async function loadConfig(){
-  try{
-    let res = await fetch(`/static/config.${TENANT}.json?v=${Date.now()}`);
-    if (!res.ok) res = await fetch(`/static/config.json?v=${Date.now()}`);
-    if (!res.ok) throw new Error('config not found');
-    const cfg = await res.json();
+// Branding from /api/portal/config (cookie auth)
+window.CONFIG = null;
 
-    const name   = cfg.brandName || 'Brand';
-    const portal = cfg.portalLabel || 'Portal';
-    const templ  = cfg.titleTemplate || '{{brand}} · {{portal}}';
-    const render = s => s.replaceAll('{{brand}}', name).replaceAll('{{portal}}', portal);
+async function loadBranding(){
+  const r = await fetch('/api/portal/config', { credentials: 'include' });
+  if (!r.ok) throw new Error('branding load failed: ' + r.status);
+  const cfg = await r.json();
+  window.CONFIG = cfg;
 
-    document.title = render(templ);
-    $('brand-text').textContent = render(templ);
+  const name   = cfg.brandName || 'Brand';
+  const portal = 'Client Portal';
+  const templ  = cfg.titleTemplate || '{{brand}} · {{portal}}';
+  const render = s => s.replaceAll('{{brand}}', name).replaceAll('{{portal}}', portal);
 
-    const footerEl = document.getElementById('brand-footer');
-    if (footerEl) footerEl.textContent = cfg.footerText || render(templ);
+  document.title = render(templ);
+  $('brand-text').textContent = render(templ);
 
-    if (cfg.logo) {
-      const img = $('brand-logo');
-      img.src = cfg.logo;
-      img.style.display = '';
-      img.alt = name;
-    }
+  const footerEl = $('brand-footer');
+  if (footerEl) footerEl.textContent = cfg.footerText || render(templ);
 
-    if (cfg.favicon){
-      const link = document.querySelector('link[rel="icon"]') || document.createElement('link');
-      link.rel = 'icon'; link.href = cfg.favicon;
-      document.head.appendChild(link);
-    }
-
-    const c = cfg.colors || {};
-    const set = (k,v)=> v!=null && document.documentElement.style.setProperty('--'+k, v);
-    set('bg', c.bg); set('bg2', c.bg2); set('card', c.card); set('text', c.text);
-    set('muted', c.muted); set('accent', c.accent); set('good', c.good);
-    set('warn', c.warn); set('bad', c.bad); set('border', c.border);
-
-    const angle = Number(cfg.gradientAngle) || 135;
-    document.body.style.background = `linear-gradient(${angle}deg, var(--bg), var(--bg2))`;
-
-    const feat = cfg.features || {};
-    if (feat.usage === false)  $('usage-card').style.display = 'none';
-    if (feat.errors === false) $('errors-card').style.display = 'none';
-    if (feat.events === false) $('events-card').style.display = 'none';
-
-  }catch(e){
-    console.warn('Using default branding; unable to load config:', e.message);
+  if (cfg.logo) {
+    const img = $('brand-logo');
+    img.src = cfg.logo;
+    img.style.display = '';
+    img.alt = name;
   }
+
+  // Apply colors to CSS vars
+  const c = cfg.colors || {};
+  const set = (k,v)=> v!=null && document.documentElement.style.setProperty('--'+k, v);
+  set('bg', c.bg);
+  set('bg2', c.bg2);
+  set('card', c.card);
+  set('text', c.text);
+  set('muted', c.muted);
+  set('accent', c.accent);
+  set('good', c.good);
+  set('warn', c.warn);
+  set('bad', c.bad);
+  set('border', c.border);
+
+  const angle = Number(cfg.gradientAngle) || 135;
+  document.body.style.background = `linear-gradient(${angle}deg, var(--bg), var(--bg2))`;
+
+  // Hide sections if features are disabled
+  const feat = cfg.features || {};
+  if (feat.usage === false)  $('usage-card').style.display = 'none';
+  if (feat.errors === false) $('errors-card').style.display = 'none';
+  if (feat.events === false) $('events-card').style.display = 'none';
+
+  return cfg;
 }
+
 
 // -------------- Tiny sparkline --------------
 const spark = document.getElementById('spark');
@@ -463,72 +522,125 @@ function formatEvent(ev){
 
 
 // -------------- Data loader --------------
-async function loadData(){
-  const [m, errs, evs, health] = await Promise.all([
-    api('/api/portal/metrics').then(r=>r.json()),
-    api('/api/portal/errors').then(r=>r.json()),
-    api('/api/portal/events').then(r=>r.json()),
-    api('/api/portal/health').then(r=>r.json()).catch(()=>({ok:false}))
-  ]);
+async function loadData() {
+  // small helper: call api() -> JSON with status & ok flags
+const fetchJSON = async (path) => {
+    try {
+      const res = await api(path);
+      const data = await res.json().catch(() => null);
+      return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+      if (e?.message === 'auth_required') throw e;
+      if (e?.message === 'rate_limited') {
+        return { ok: false, status: 429, data: null, error: e };
+      }
+      return { ok: false, status: 0, data: null, error: e };
+    }
+  };
 
-  const status = (m.status||'ok').toUpperCase();
-  const color = status==='OK'?'good':(status==='DEGRADED'?'warn':'bad');
-  $('kpi-status').textContent = status;
-  $('kpi-status').className = 'value '+color;
 
-  $('kpi-req').textContent = m.requestsToday ?? 0;
-  $('kpi-sr').textContent  = (m.successRate ?? 0) + '%';
-  $('kpi-lat').textContent = (m.avgLatencyMs ?? 0) + 'ms';
+  try {
+    const [mRes, errsRes, evsRes, healthRes] = await Promise.all([
+      fetchJSON('/api/portal/metrics'),
+      fetchJSON('/api/portal/errors'),
+      fetchJSON('/api/portal/events'),
+      fetchJSON('/api/portal/health'),
+    ]);
 
-  const up = m.uptimeSec||0;
-  $('uptime').textContent = Math.floor(up/3600)+'h '+Math.floor((up%3600)/60)+'m';
-  $('health').textContent = (health && health.ok) ? 'Healthy' : 'Unreachable';
+    // ----- Health / status -----
+    const m = mRes.ok && mRes.data ? mRes.data : {};
+    const healthOK = !!(healthRes.ok && healthRes.data && healthRes.data.ok);
 
-  $('u-period').textContent = m.usage?.period ?? '—';
-  const pt = m.usage?.prompt_tokens ?? 0;
-  const ct = m.usage?.completion_tokens ?? 0;
-  const cached = m.usage?.cached_tokens ?? 0;
+    const statusText = (m.status || 'ok').toUpperCase();
+    const statusClass =
+      statusText === 'OK' ? 'good' :
+      statusText === 'DEGRADED' ? 'warn' : 'bad';
 
-  $('u-tokens').textContent = (pt + ct + cached).toLocaleString();
-  $('u-cost').textContent = m.usage?.costUSD != null ? ('$' + m.usage.costUSD.toFixed(6)) : '—';
+    $('kpi-status').textContent = mRes.status === 429 ? 'RATE LIMITED' : statusText;
+    $('kpi-status').className = 'value ' + (mRes.status === 429 ? 'warn' : statusClass);
 
-  $('errors-tbody').innerHTML =
-    (Array.isArray(errs) ? errs : [])
-      .map(e=>`<tr><td>${fmt(e.at)}</td><td class="mono">${esc(e.message)}</td></tr>`).join('') ||
-    '<tr><td colspan="2" style="color:var(--muted)">No recent errors</td></tr>';
+    $('health').textContent =
+      mRes.status === 429 ? 'Rate limited' :
+      healthOK ? 'Healthy' : 'Unreachable';
 
-  $('events-list').innerHTML =
-    (Array.isArray(evs) ? evs : []).map(formatEvent).join('') ||
-    '<li style="color:var(--muted)">No recent events</li>';
+    // ----- Top KPIs -----
+    $('kpi-req').textContent = m.requestsToday ?? 0;
+    $('kpi-sr').textContent  = ((m.successRate ?? 0)).toString() + '%';
+    $('kpi-lat').textContent = ((m.avgLatencyMs ?? 0)).toString() + 'ms';
 
-  // safest metrics-log rendering (no innerHTML)
-  api('/api/portal/metrics-log').then(r=>r.json()).then(data=>{
+    const up = m.uptimeSec ?? 0;
+    $('uptime').textContent =
+      Math.floor(up / 3600) + 'h ' + Math.floor((up % 3600) / 60) + 'm';
+
+    // ----- Usage summary card -----
+    const usage = m.usage || null;
+    $('u-period').textContent = usage?.period ?? '—';
+
+    const pt = usage?.prompt_tokens ?? 0;
+    const ct = usage?.completion_tokens ?? 0;
+    const cached = usage?.cached_tokens ?? 0;
+
+    $('u-tokens').textContent = (pt + ct + cached).toLocaleString();
+    $('u-cost').textContent =
+      typeof usage?.costUSD === 'number' ? ('$' + usage.costUSD.toFixed(6)) : '—';
+
+    // ----- Errors table -----
+    const errs = Array.isArray(errsRes.data) ? errsRes.data : [];
+    $('errors-tbody').innerHTML =
+      errs.map(e =>
+        `<tr><td>${fmt(e.at)}</td><td class="mono">${esc(e.message)}</td></tr>`
+      ).join('') ||
+      '<tr><td colspan="2" style="color:var(--muted)">No recent errors</td></tr>';
+
+    // ----- Events list -----
+    const evs = Array.isArray(evsRes.data) ? evsRes.data : [];
+    $('events-list').innerHTML =
+      (evs.length ? evs.map(formatEvent).join('') : '') ||
+      '<li style="color:var(--muted)">No recent events</li>';
+
+    // ----- Metrics log (safe DOM ops; no innerHTML) -----
+    const logRes = await fetchJSON('/api/portal/metrics-log');
     const ul = $('metrics-log');
     ul.textContent = '';
-    const rows = Array.isArray(data) ? data : [];
+    const rows = Array.isArray(logRes.data) ? logRes.data : [];
     if (!rows.length) {
       const li = document.createElement('li');
       li.style.color = 'var(--muted)';
       li.textContent = 'No metrics logged';
       ul.appendChild(li);
+    } else {
+      rows.forEach(row => {
+        const li = document.createElement('li');
+        li.append(document.createTextNode(`[${row?.at ? fmt(row.at) : '—'}] `));
+        const strong = document.createElement('strong');
+        strong.textContent = row?.type ?? '';
+        li.appendChild(strong);
+        li.append(document.createTextNode(`: ${row?.value ?? ''}`));
+        ul.appendChild(li);
+      });
+    }
+
+    // ----- Sparkline -----
+    const prev = window.__lastReqs || 0;
+    const now = m.requestsToday || 0;
+    series.push(Math.max(0, now - prev));
+    series.shift();
+    window.__lastReqs = now;
+    drawSpark();
+
+  } catch (err) {
+    if (err?.message === 'auth_required') {
+      // api() already showed the login view
       return;
     }
-    rows.forEach(m=>{
-      const li = document.createElement('li');
-      li.append(document.createTextNode(`[${m?.at ? fmt(m.at) : '—'}] `));
-      const strong = document.createElement('strong');
-      strong.textContent = m?.type ?? '';
-      li.appendChild(strong);
-      li.append(document.createTextNode(`: ${m?.value ?? ''}`));
-      ul.appendChild(li);
-    });
-  });
-
-  series.push(Math.max(0, (m.requestsToday||0) - (window.__lastReqs||0)));
-  series.shift();
-  window.__lastReqs = m.requestsToday||0;
-  drawSpark();
+    console.error('❌ loadData failed:', err);
+    // make the status visibly “offline” without throwing
+    $('kpi-status').textContent = 'OFFLINE';
+    $('kpi-status').className = 'value bad';
+    $('health').textContent = 'Unreachable';
+  }
 }
+
 
 </script>
 
@@ -537,20 +649,21 @@ async function loadData(){
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <script>
   // Register once, after Chart.js is loaded
-  const DepthShadow = {
-    id: 'depthShadow',
-    beforeDatasetDraw(chart, args, opts) {
-      const ctx = chart.ctx;
-      ctx.save();
-      ctx.shadowColor  = opts.color   || 'rgba(0,0,0,.45)';
-      ctx.shadowBlur   = opts.blur    || 22;
-      ctx.shadowOffsetX= opts.offsetX || 0;
-      ctx.shadowOffsetY= opts.offsetY || 10;
-    },
-    afterDatasetDraw(chart) {
-      chart.ctx.restore();
-    }
-  };
+const DepthShadow = {
+  id: 'depthShadow',
+  beforeDatasetDraw(chart, args, opts = {}) {
+    const { color='rgba(0,0,0,.45)', blur=22, offsetX=0, offsetY=10 } = opts || {};
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.shadowColor  = color;
+    ctx.shadowBlur   = blur;
+    ctx.shadowOffsetX= offsetX;
+    ctx.shadowOffsetY= offsetY;
+  },
+  afterDatasetDraw(chart) {
+    chart.ctx.restore();
+  }
+};
   Chart.register(DepthShadow);
 </script>
 
@@ -690,11 +803,19 @@ function drawConversationHistogram(history) {
 async function loadUsageCharts() {
   try {
     const res = await api('/api/portal/usage');
-    if (!res.ok) throw new Error("Usage API error: " + res.status);
-    const { current, history } = await res.json();
-    console.log("📊 Usage response:", current, history);
+    if (!res.ok) throw new Error('Usage API error: ' + res.status);
 
-    // Token Pie
+    const payload = await res.json().catch(() => ({}));
+    const current = payload?.current || null;
+    const history = Array.isArray(payload?.history) ? payload.history : [];
+
+    const safeCurrent = {
+      prompt_tokens: current?.prompt_tokens ?? 0,
+      completion_tokens: current?.completion_tokens ?? 0,
+      breakdown: current?.breakdown || null
+    };
+
+    // ----- Token Breakdown -----
     if (!tokenChart) {
       tokenChart = new Chart(document.getElementById('tokenBreakdownChart'), {
         type: 'pie',
@@ -708,17 +829,18 @@ async function loadUsageCharts() {
       });
     }
     tokenChart.data.datasets[0].data = [
-      current.prompt_tokens || 0,
-      current.completion_tokens || 0
+      safeCurrent.prompt_tokens,
+      safeCurrent.completion_tokens
     ];
     tokenChart.update();
 
-    // ⏰ Time-of-day Histogram (instead of Sankey)
+    // ----- Time-of-day Histogram -----
     drawConversationHistogram(history);
 
-    // Cost Pie
-    if (current.breakdown) {
-      const { promptUSD = 0, completionUSD = 0, cachedUSD = 0 } = current.breakdown;
+    // ----- Cost Breakdown -----
+    if (safeCurrent.breakdown) {
+      const { promptUSD = 0, completionUSD = 0, cachedUSD = 0 } = safeCurrent.breakdown;
+
       if (!costChart) {
         costChart = new Chart(document.getElementById('costBreakdownChart'), {
           type: 'pie',
@@ -733,10 +855,7 @@ async function loadUsageCharts() {
             plugins: {
               tooltip: {
                 callbacks: {
-                  label: function (context) {
-                    let value = context.raw || 0;
-                    return `${context.label}: $${value.toFixed(4)}`;
-                  }
+                  label: (ctx) => `${ctx.label}: $${(ctx.raw || 0).toFixed(4)}`
                 }
               }
             }
@@ -745,55 +864,47 @@ async function loadUsageCharts() {
       }
       costChart.data.datasets[0].data = [promptUSD, completionUSD, cachedUSD];
       costChart.update();
+    } else if (costChart) {
+      // clear if no breakdown yet
+      costChart.data.datasets[0].data = [0, 0, 0];
+      costChart.update();
     }
 
-    // Forecast
+    // ----- Forecast -----
     updateForecast(history);
 
   } catch (err) {
-    console.error("❌ loadUsageCharts failed:", err);
+    // api() may throw on 401/429 if you implemented that handling
+    if (err?.message === 'auth_required' || err?.message === 'rate_limited') return;
+    console.error('❌ loadUsageCharts failed:', err);
   }
 }
-
+ async function bootDashboard () {
+    const cfg = await loadBranding();
+    show('dashboard');
+    loadData();
+    loadUsageCharts();
+    await loadPremiumModule(cfg);
+    // start polling
+    if (!window.__pollingStarted) {
+      setInterval(loadData, 5000);
+      setInterval(loadUsageCharts, 10000);
+      window.__pollingStarted = true;
+    }
+ }
 
 // --- Kickoff ---
 window.addEventListener('resize', drawSpark);
 
 (async function start(){
   try {
-    await loadConfig();
-    drawSpark();
-
     const authed = await checkSession();
-    console.log("checkSession returned:", authed);
-
-    if (!authed) {
-      console.log("❌ No active session, showing login form");
-      show('login');   // 👈 force login visible
-      return;
-    }
-
-    console.log("✅ Session found, loading dashboard");
-    loadData();
-    loadUsageCharts();
-    await loadPremiumModule();
-
-    setInterval(loadData, 5000);
-    setInterval(loadUsageCharts, 10000);
+    if (!authed) { show('login'); return; }
+    await bootDashboard();   // avoids duplicate init + duplicate intervals
   } catch (err) {
-    console.error("❌ Startup error:", err);
-    show('login');   // 👈 fallback if anything breaks
+    console.error('❌ Startup error:', err);
+    show('login');
   }
 })();
-// 👇 Force the login form to show if nothing else loads
-window.addEventListener('DOMContentLoaded', () => {
-  const loginEl = document.getElementById("login");
-  const dashEl  = document.getElementById("dashboard");
-  if (loginEl && dashEl) {
-    loginEl.style.display = "";
-    dashEl.style.display = "none";
-    console.log("✅ Forced login visible on first load");
-  }
-});
 
 </script>
