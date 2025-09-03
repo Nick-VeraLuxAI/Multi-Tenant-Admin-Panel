@@ -1,3 +1,4 @@
+// schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,75 +11,70 @@ datasource db {
 model Tenant {
   id        String   @id @default(cuid())
   name      String
-  apiKey    String   @unique
+  subdomain String?  @unique
+  apiKey    String?  @unique
   plan      String   @default("basic")
   createdAt DateTime @default(now())
-  subdomain String?  @unique
 
-  branding  Json?    @default("{}")
-  settings  Json?    @default("{}")
+  // Email / SMTP
+  smtpHost  String?
+  smtpPort  Int?
+  smtpUser  String?
+  smtpPass  String?
+  emailFrom String?
+  emailTo   String?
 
-  // Relationships (no onDelete here)
-  Conversation    Conversation[]
-  ConversationLog ConversationLog[]
-  Event           Event[]
-  Lead            Lead[]
-  Metric          Metric[]
-  Usage           Usage[]
-  AdminUser       AdminUser[]
+  // AI Keys
+  openaiKey String?
+
+  // Google OAuth
+  googleClientId     String?
+  googleClientSecret String?
+  googleRedirectUri  String?
+  googleTokens       Json?
+
+  // Branding / CSS
+  brandColor   String?
+  brandHover   String?
+  botBg        String?
+  botText      String?
+  userBg       String?
+  userText     String?
+  glassBg      String?
+  glassTop     String?
+  blurPx       String?
+  headerGlow   String?
+  watermarkUrl String?
+  fontFamily   String?
+
+  // JSON blobs (keep defaults to avoid null checks everywhere)
+  branding Json? @default("{}")
+  settings Json? @default("{}")
+
+  // Relations
+  convos     Conversation[]
+  convLogs   ConversationLog[]
+  events     Event[]
+  leads      Lead[]
+  metrics    Metric[]
+  usage      Usage[]
+  tags       TagDictionary[]
+  adminUsers AdminUser[]
 }
 
 model Conversation {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   tenantId  String
   sessionId String
-  startedAt DateTime @default(now())
+  startedAt DateTime  @default(now())
   endedAt   DateTime?
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  Message   Message[]
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages  Message[]
 
   @@unique([tenantId, sessionId])
   @@index([tenantId])
-}
-
-model ConversationLog {
-  id        String   @id @default(cuid())
-  tenantId  String
-  sessionId String
-  at        DateTime @default(now())
-  data      Json
-
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
-}
-
-model Event {
-  id        String   @id @default(cuid())
-  tenantId  String
-  type      String
-  content   String
-  createdAt DateTime @default(now())
-
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
-}
-
-model Lead {
-  id        String   @id @default(cuid())
-  tenantId  String
-  name      String
-  email     String
-  phone     String
-  snippet   String
-  tags      String[]
-  createdAt DateTime @default(now())
-
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
+  @@index([tenantId, startedAt]) // added: matches recent-by-tenant reads
 }
 
 model Message {
@@ -90,21 +86,39 @@ model Message {
   tokensOut      Int          @default(0)
   createdAt      DateTime     @default(now())
 
-  Conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
+  @@index([conversationId, createdAt]) // added: speeds last-message lookups
 }
 
-model Metric {
+model Lead {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  email     String
+  phone     String
+  snippet   String
+  tags      String[] @default([]) // added: avoid null checks
+  createdAt DateTime @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+model Event {
   id        String   @id @default(cuid())
   tenantId  String
   type      String
-  value     Float
+  content   String
   createdAt DateTime @default(now())
 
-  Tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, type, createdAt]) // added: speeds errors-by-tenant latest
 }
 
 model Usage {
@@ -118,9 +132,47 @@ model Usage {
   breakdown        Json?
   createdAt        DateTime @default(now())
 
-  Tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([tenantId, createdAt])
+}
+
+model Metric {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  value     Float
+  createdAt DateTime @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, name, createdAt])
+}
+
+model ConversationLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  sessionId String
+  at        DateTime @default(now())
+  data      Json
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+model TagDictionary {
+  id        String   @id @default(cuid())
+  tenantId  String
+  category  String
+  keywords  String[] @default([]) // added: avoid null checks
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@unique([tenantId, category])
 }
 
 model AdminUser {
@@ -130,8 +182,8 @@ model AdminUser {
   passwordHash String
   createdAt    DateTime @default(now())
 
-  Tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
-  @@unique([tenantId, email]) // unique per tenant
+  @@unique([tenantId, email]) // per-tenant unique emails
 }
