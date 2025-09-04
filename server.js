@@ -22,46 +22,45 @@ const ADMIN_KEY = process.env.ADMIN_CUSTOMER_KEY || process.env.ADMIN_KEY || '';
 
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-
-// ⛔ Per-IP limiter for login: 20 failed attempts / 15 min
+// ⛔ Per-IP limiter for login
 const loginIpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'too_many_attempts' },
-  skipSuccessfulRequests: true,           // ✅ only counts 4xx/5xx (i.e., failed logins)
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => ipKeyGenerator(req.ip, 64),
+  keyGeneratorIpFallback: (req) => ipKeyGenerator(req.ip, 64),
 });
 
-// ⛔ Per-email limiter for login: 7 failed attempts / 15 min
+// ⛔ Per-email limiter for login
 const loginEmailLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 7,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'too_many_attempts' },
-  keyGenerator: (req, _res) => {
+  keyGenerator: (req) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
-    return email || ipKeyGenerator(req.ip, 64);   // ✅ safe IPv6 fallback
+    return email || ipKeyGenerator(req.ip, 64);
   },
+  keyGeneratorIpFallback: (req) => ipKeyGenerator(req.ip, 64),
   skipSuccessfulRequests: true,
 });
 
-
-// 🌐 Gentle global limiter for the authed portal APIs
-// Your UI polls ~18 req/min; 120/min leaves plenty of headroom per IP.
+// 🌐 Authed portal APIs
 const portalLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 120,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'rate_limited' },
-  keyGenerator: (req) => {
-    return `${req.user.tenantId}:${req.user.adminUserId || ipKeyGenerator(req.ip, 64)}`;
-  }
+  keyGenerator: (req) => `${req.user.tenantId}:${req.user.adminUserId || ipKeyGenerator(req.ip, 64)}`,
+  keyGeneratorIpFallback: (req) => ipKeyGenerator(req.ip, 64),
 });
 
-
+// 📥 Intake (header-gated)
 const intakeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 300,
@@ -70,10 +69,8 @@ const intakeLimiter = rateLimit({
   message: { error: 'rate_limited' },
   keyGenerator: (req) =>
     `${req.headers['x-customer-key'] || 'nokey'}:${ipKeyGenerator(req.ip, 64)}:${String(req.headers['x-tenant'] || '')}`,
+  keyGeneratorIpFallback: (req) => ipKeyGenerator(req.ip, 64),
 });
-
-
-
 
 // --- Guards ---
 if (!ADMIN_KEY) {
