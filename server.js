@@ -20,7 +20,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const COOKIE_NAME = 'solomon_session';
 const ADMIN_KEY = process.env.ADMIN_CUSTOMER_KEY || process.env.ADMIN_KEY || '';
 
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
+
 
 // ⛔ Per-IP limiter for login: 20 failed attempts / 15 min
 const loginIpLimiter = rateLimit({
@@ -41,10 +42,11 @@ const loginEmailLimiter = rateLimit({
   message: { error: 'too_many_attempts' },
   keyGenerator: (req, _res) => {
     const email = String(req.body?.email || '').trim().toLowerCase();
-    return email || req.ip;                // fallback so missing email doesn’t throttle everyone
+    return email || ipKeyGenerator(req.ip, 64);   // ✅ safe IPv6 fallback
   },
   skipSuccessfulRequests: true,
 });
+
 
 // 🌐 Gentle global limiter for the authed portal APIs
 // Your UI polls ~18 req/min; 120/min leaves plenty of headroom per IP.
@@ -55,10 +57,10 @@ const portalLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'rate_limited' },
   keyGenerator: (req) => {
-    // req.user is set by requireAuth just before this
-    return `${req.user.tenantId}:${req.user.adminUserId || req.ip}`;
+    return `${req.user.tenantId}:${req.user.adminUserId || ipKeyGenerator(req.ip, 64)}`;
   }
 });
+
 
 const intakeLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -67,7 +69,7 @@ const intakeLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'rate_limited' },
   keyGenerator: (req) =>
-    `${req.headers['x-customer-key'] || 'nokey'}:${req.ip}:${String(req.headers['x-tenant'] || '')}`,
+    `${req.headers['x-customer-key'] || 'nokey'}:${ipKeyGenerator(req.ip, 64)}:${String(req.headers['x-tenant'] || '')}`,
 });
 
 
