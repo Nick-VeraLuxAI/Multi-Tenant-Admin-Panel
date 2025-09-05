@@ -60,6 +60,9 @@ model Tenant {
   usage      Usage[]
   tags       TagDictionary[]
   adminUsers AdminUser[]
+
+  // Bot prompts (DB-first: system / policy / voice)
+  prompts Json @default("{}")
 }
 
 model Conversation {
@@ -187,3 +190,4 @@ model AdminUser {
   @@index([tenantId])
   @@unique([tenantId, email]) // per-tenant unique emails
 }
+
