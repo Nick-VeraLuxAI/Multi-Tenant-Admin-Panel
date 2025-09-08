@@ -97,6 +97,11 @@
   }
 
   
+  /* Hide the login wrapper once authed; make dashboard show */
+  body.authed #authwrap { display: none !important; }
+  #dashboard { display: none; min-height: 100dvh; }
+
+
   
 
 
@@ -120,16 +125,17 @@
   </div>
 </header>
 
-<!-- Fullscreen flex wrapper -->
-<div style="min-height:100vh; display:flex; align-items:center; justify-content:center;">
+
+<!-- Fullscreen flex wrapper (only for login) -->
+<div id="authwrap" style="min-height:100vh; display:flex; align-items:center; justify-content:center;">
   <!-- 🔐 Login panel (hidden when authed) -->
   <div id="login" style="display:none; width:100%; max-width:420px; background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 30px #0006; padding:20px">
     <h2 style="margin:0 0 12px 0">Admin Login</h2>
     <form id="loginForm" class="grid" style="gap:10px">
       <input type="email" id="email" name="email" autocomplete="username" placeholder="Email" required
-            style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
+             style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
       <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Password" required
-            style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
+             style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
       <button type="submit" style="padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--accent); color:#fff; cursor:pointer">
         Sign In
       </button>
@@ -137,6 +143,7 @@
     <p id="loginError" style="color:var(--bad); margin-top:8px"></p>
   </div>
 </div>
+
 
 <!-- 📊 Dashboard (hidden until authed) -->
 <main id="dashboard" class="grid" style="display:none">
