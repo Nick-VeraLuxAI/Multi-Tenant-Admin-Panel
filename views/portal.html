@@ -98,31 +98,6 @@
 
   
   
-<style id="gap-fix">
-  /* Header height (adjust if your top bar is taller) */
-  :root { --navH: 56px; }
-
-  /* Keep header visible, content starts right under it */
-  header, .topbar { position: sticky; top: 0; z-index: 50; height: var(--navH); }
-
-  /* Make the main content start at the top, kill large top margins */
-  main, .portal-content, #content, .dashboard {
-    min-height: calc(100dvh - var(--navH));
-    padding-top: 16px;
-    margin-top: 0 !important;
-  }
-
-  /* If there’s any “spacer/hero/intro” pushing content down, hide it */
-  .spacer, .hero, .above-fold, .intro-banner {
-    display: none !important;
-    height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-
-  /* Ensure the very first section isn’t adding extra gap */
-  main > *:first-child { margin-top: 0 !important; }
-</style>
 
 
 </style>
