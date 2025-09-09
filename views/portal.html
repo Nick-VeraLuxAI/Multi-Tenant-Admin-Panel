@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Loading…</title>
+<title>Admin Panel</title>
 <style>
   :root{
     /* Neutral → Earth fallbacks; DB branding will override */
@@ -97,12 +97,15 @@
   }
 
   
-  /* Hide the login wrapper once authed; make dashboard show */
-  body.authed #authwrap { display: none !important; }
-  #dashboard { display: none; min-height: 100dvh; }
-
-
   
+/* Auth view toggling */
+#login { display: block; }
+#dashboard { display: none; }
+body.authed #authwrap { display: none; }          /* no !important needed */
+body.authed #login { display: none; }
+body.authed #dashboard { display: grid; }         /* was block */
+
+
 
 
 </style>
@@ -125,13 +128,12 @@
   </div>
 </header>
 
-
 <!-- Fullscreen flex wrapper (only for login) -->
 <div id="authwrap" style="min-height:100vh; display:flex; align-items:center; justify-content:center;">
   <!-- 🔐 Login panel (hidden when authed) -->
-  <div id="login" style="display:none; width:100%; max-width:420px; background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 30px #0006; padding:20px">
+  <div id="login" style="width:100%; max-width:420px; background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:0 10px 30px #0006; padding:20px">
     <h2 style="margin:0 0 12px 0">Admin Login</h2>
-    <form id="loginForm" class="grid" style="gap:10px">
+    <form id="loginForm" method="post" class="grid" style="gap:10px">
       <input type="email" id="email" name="email" autocomplete="username" placeholder="Email" required
              style="padding:10px; border-radius:8px; border:1px solid var(--border); background:#0003; color:var(--text)">
       <input type="password" id="password" name="password" autocomplete="current-password" placeholder="Password" required
@@ -144,9 +146,8 @@
   </div>
 </div>
 
-
 <!-- 📊 Dashboard (hidden until authed) -->
-<main id="dashboard" class="grid" style="display:none">
+<main id="dashboard" class="grid">
   <div id="premium-sections" style="display:none" data-tenant="" data-key=""></div>
 
   <!-- Usage Visuals -->
@@ -239,6 +240,15 @@
 
 
 <script>
+
+  // strip accidental creds from the URL if JS ever fell back to GET
+(() => {
+  const u = new URL(location.href);
+  let touched = false;
+  ['email','password'].forEach(k => { if (u.searchParams.has(k)) { u.searchParams.delete(k); touched = true; }});
+  if (touched) history.replaceState(null, '', u.pathname + (u.searchParams.toString() ? `?${u.searchParams}` : ''));
+})();
+
 const $ = id => document.getElementById(id);
 const fmt = ts => new Date(ts).toLocaleString();
 const esc = s => String(s ?? '')
@@ -247,7 +257,6 @@ const esc = s => String(s ?? '')
   .replace(/'/g,'&#39;');
 
 let TENANT = "default"; // will be set after login
-
 
 // 👇 Session / auth UI helpers
 function show(view){
@@ -258,21 +267,24 @@ function show(view){
 
   const authed = (view === 'dashboard');
 
-  // ✅ flip body class so CSS can hide the auth wrapper
   document.body.classList.toggle('authed', authed);
 
-  // (optional: also set inline style for extra safety)
-  if (authwrap) authwrap.style.display = authed ? 'none' : '';
-
-  if (login) login.style.display = authed ? 'none' : '';
-  if (dash)  dash.style.display  = authed ? ''    : 'none';
-  if (btn)   btn.style.display   = authed ? ''    : 'none';
+  if (authwrap) authwrap.style.display = authed ? 'none'  : 'flex';
+  if (login)    login.style.display    = authed ? 'none'  : 'block';
+  if (dash)     dash.style.display     = authed ? 'grid'  : 'none';
+  if (btn)      btn.style.display      = authed ? ''      : 'none';
 
   if (!authed) {
     setTimeout(() => $('email')?.focus(), 0);
-    $('loginError')?.textContent = '';
-    $('password')?.value = '';
-    $('loginForm')?.reset();
+
+    const err = $('loginError');
+    if (err) err.textContent = '';
+
+    const pwd = $('password');
+    if (pwd) pwd.value = '';
+
+    const form = $('loginForm');
+    if (form) form.reset();
   }
 }
 
@@ -330,61 +342,76 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    $('loginError').textContent = '';
+  e.preventDefault();
+  $('loginError').textContent = '';
 
-    const email = $('email').value.trim();
-    const password = $('password').value;
-    const hintEl = document.getElementById('tenantHint');
-    const tenantHint = hintEl ? hintEl.value : '';
+  const email = $('email').value.trim();
+  const password = $('password').value;
+  const hintEl = document.getElementById('tenantHint');
+  const tenantHint = hintEl ? hintEl.value : '';
 
-    const btn = form.querySelector('button[type="submit"]');
-    btn.disabled = true;
-    btn.textContent = 'Signing in...';
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
 
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, password, tenantHint })
-      });
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, password, tenantHint })
+    });
 
-      // Handle rate limiting FIRST (this block was unreachable before)
-      if (res.status === 429) {
-        const err = await res.json().catch(() => ({}));
-        $('loginError').textContent =
-          err?.error === 'too_many_attempts'
-            ? 'Too many failed attempts. Try again in a few minutes.'
-            : 'You’re being rate limited. Please wait a moment and try again.';
-        $('password').value = '';
+    // rate-limit handling
+    if (res.status === 429) {
+      const err = await res.json().catch(() => ({}));
+      $('loginError').textContent =
+        err?.error === 'too_many_attempts'
+          ? 'Too many failed attempts. Try again in a few minutes.'
+          : 'You’re being rate limited. Please wait a moment and try again.';
+      $('password').value = '';
+      return;
+    }
+
+    if (res.ok) {
+      // ✅ hide login immediately so the panel swaps right away
+      show('dashboard');
+
+      // fetch tenant from the session
+      try {
+        const meRes = await fetch('/api/me', { credentials: 'include' });
+        if (!meRes.ok) throw new Error('me_failed');
+        const me = await meRes.json();
+        TENANT = me?.tenantId || '';
+      } catch {
+        show('login');
+        $('loginError').textContent = 'Session check failed. Please try again.';
         return;
       }
 
-        if (res.ok) {
-          const me = await fetch('/api/me', { credentials: 'include' }).then(r => r.json());
-          TENANT = me.tenantId;
-          await bootDashboard();   // single source of truth for init + polling
-          return;
-        } else {
-
-
-        const err = await res.json().catch(() => ({}));
-        if (err?.error === 'tenant_required') {
-          await ensureTenantPicker(err.tenants || []);
-          $('loginError').textContent = 'Please select a tenant and sign in again.';
-        } else {
-          $('loginError').textContent = 'Invalid email or password.';
-        }
-        $('password').value = '';
-      }
-    } catch (err) {
-      $('loginError').textContent = 'Network error — please try again.';
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Sign In';
+      // kick off dashboard work without blocking the UI
+      setTimeout(bootDashboard, 0);
+      return;
     }
-  });
+
+    // non-OK (but not 429): show specific errors
+    const err = await res.json().catch(() => ({}));
+    if (err?.error === 'tenant_required') {
+      await ensureTenantPicker(err.tenants || []);
+      $('loginError').textContent = 'Please select a tenant and sign in again.';
+    } else {
+      $('loginError').textContent = 'Invalid email or password.';
+    }
+    $('password').value = '';
+
+  } catch (err) {
+    $('loginError').textContent = 'Network error — please try again.';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+});
+
 
   const logout = $('logoutBtn');
   if (logout) {
@@ -811,6 +838,51 @@ function drawConversationHistogram(history) {
 
 
 // --- Main Loader ---
+
+// Accepts many key variants and falls back to pricing or proportional split
+function normalizeBreakdown(bd, current, pricing = {}) {
+  bd = bd || {};
+  const pick = (o, keys) => keys.reduce((v,k)=> v ?? (o ? o[k] : undefined), undefined);
+
+  let promptUSD     = Number(pick(bd, ['promptUSD','prompt_usd','prompt'])) || 0;
+  let completionUSD = Number(pick(bd, ['completionUSD','completion_usd','completion'])) || 0;
+  let cachedUSD     = Number(pick(bd, ['cachedUSD','cached_usd','cached'])) || 0;
+
+  const sum = promptUSD + completionUSD + cachedUSD;
+  if (sum > 0) return { promptUSD, completionUSD, cachedUSD };
+
+  const pt = Number(current?.prompt_tokens)     || 0;
+  const ct = Number(current?.completion_tokens) || 0;
+  const kt = Number(current?.cached_tokens)     || 0;
+
+  // Optional: compute from per-1k pricing if you later include it in the API
+  const pp = Number(pricing.promptPer1K);
+  const cp = Number(pricing.completionPer1K);
+  const kp = Number(pricing.cachedPer1K);
+  if (Number.isFinite(pp) && Number.isFinite(cp) && Number.isFinite(kp)) {
+    return {
+      promptUSD:     (pt / 1000) * pp,
+      completionUSD: (ct / 1000) * cp,
+      cachedUSD:     (kt / 1000) * kp
+    };
+  }
+
+  // Fallback: apportion total by token share
+  const totalCost = Number(current?.costUSD) || 0;
+  const totalTok  = pt + ct + kt;
+  if (totalCost > 0 && totalTok > 0) {
+    return {
+      promptUSD:     totalCost * (pt / totalTok),
+      completionUSD: totalCost * (ct / totalTok),
+      cachedUSD:     totalCost * (kt / totalTok)
+    };
+  }
+
+  return { promptUSD: 0, completionUSD: 0, cachedUSD: 0 };
+}
+
+
+// ---- Replace your entire loadUsageCharts() with this ----
 async function loadUsageCharts() {
   try {
     const res = await api('/api/portal/usage');
@@ -821,9 +893,11 @@ async function loadUsageCharts() {
     const history = Array.isArray(payload?.history) ? payload.history : [];
 
     const safeCurrent = {
-      prompt_tokens: current?.prompt_tokens ?? 0,
+      prompt_tokens:     current?.prompt_tokens ?? 0,
       completion_tokens: current?.completion_tokens ?? 0,
-      breakdown: current?.breakdown || null
+      cached_tokens:     current?.cached_tokens ?? 0,
+      costUSD:           current?.costUSD ?? 0,
+      breakdown:         current?.breakdown || null
     };
 
     // ----- Token Breakdown -----
@@ -831,26 +905,39 @@ async function loadUsageCharts() {
       tokenChart = new Chart(document.getElementById('tokenBreakdownChart'), {
         type: 'pie',
         data: {
-          labels: ['Prompt Tokens', 'Completion Tokens'],
+          labels: ['Prompt Tokens', 'Completion Tokens', 'Cached Tokens'],
           datasets: [{
-            data: [0, 0],
-            backgroundColor: ['#3498db', '#2ecc71']
+            data: [0, 0, 0],
+            backgroundColor: ['#3498db', '#2ecc71', '#f39c12']
           }]
         }
       });
     }
+
+    // ensure labels/data always match three slices
+    tokenChart.data.labels = ['Prompt Tokens', 'Completion Tokens', 'Cached Tokens'];
     tokenChart.data.datasets[0].data = [
       safeCurrent.prompt_tokens,
-      safeCurrent.completion_tokens
+      safeCurrent.completion_tokens,
+      safeCurrent.cached_tokens
     ];
     tokenChart.update();
 
     // ----- Time-of-day Histogram -----
     drawConversationHistogram(history);
 
-    // ----- Cost Breakdown -----
-    if (safeCurrent.breakdown) {
-      const { promptUSD = 0, completionUSD = 0, cachedUSD = 0 } = safeCurrent.breakdown;
+    // ----- Cost Breakdown (resilient) -----
+    {
+      const { promptUSD, completionUSD, cachedUSD } = normalizeBreakdown(
+        current?.breakdown,
+        {
+          prompt_tokens:     safeCurrent.prompt_tokens,
+          completion_tokens: safeCurrent.completion_tokens,
+          cached_tokens:     safeCurrent.cached_tokens,
+          costUSD:           safeCurrent.costUSD
+        }
+        // , optional pricing object if you add it to the API later
+      );
 
       if (!costChart) {
         costChart = new Chart(document.getElementById('costBreakdownChart'), {
@@ -866,18 +953,15 @@ async function loadUsageCharts() {
             plugins: {
               tooltip: {
                 callbacks: {
-                  label: (ctx) => `${ctx.label}: $${(ctx.raw || 0).toFixed(4)}`
+                  label: (ctx) => `${ctx.label}: $${Number(ctx.raw || 0).toFixed(4)}`
                 }
               }
             }
           }
         });
       }
+
       costChart.data.datasets[0].data = [promptUSD, completionUSD, cachedUSD];
-      costChart.update();
-    } else if (costChart) {
-      // clear if no breakdown yet
-      costChart.data.datasets[0].data = [0, 0, 0];
       costChart.update();
     }
 
@@ -885,7 +969,6 @@ async function loadUsageCharts() {
     updateForecast(history);
 
   } catch (err) {
-    // api() may throw on 401/429 if you implemented that handling
     if (err?.message === 'auth_required' || err?.message === 'rate_limited') return;
     console.error('❌ loadUsageCharts failed:', err);
   }
@@ -919,3 +1002,4 @@ window.addEventListener('resize', drawSpark);
 })();
 
 </script>
+
