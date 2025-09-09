@@ -72,6 +72,8 @@ const intakeLimiter = rateLimit({
   keyGeneratorIpFallback: (req) => ipKeyGenerator(req.ip, 64),
 });
 
+
+
 // --- Guards ---
 if (!ADMIN_KEY) {
   console.error('ADMIN_KEY missing. Set ADMIN_CUSTOMER_KEY or ADMIN_KEY.');
@@ -87,6 +89,44 @@ app.use(cookieParser());
 app.use(express.json({ limit: '1mb' })); 
 
 /* ------------------------- Session helpers ------------------------- */
+// helpers (top of server.js)
+function toNum(v) { const n = Number(v); return Number.isFinite(n) ? n : undefined; }
+
+function canonicalizeBreakdownFromPayload(u = {}) {
+  const bd = u.breakdown || {};
+
+  // accept multiple spellings
+  const promptUSD     = toNum(bd.promptUSD ?? bd.prompt_usd ?? bd.prompt);
+  const completionUSD = toNum(bd.completionUSD ?? bd.completion_usd ?? bd.completion);
+  const cachedUSD     = toNum(bd.cachedUSD ?? bd.cached_usd ?? bd.cached);
+
+  if ([promptUSD, completionUSD, cachedUSD].some(v => v != null)) {
+    return {
+      promptUSD:     promptUSD ?? 0,
+      completionUSD: completionUSD ?? 0,
+      cachedUSD:     cachedUSD ?? 0
+    };
+  }
+
+  // derive if breakdown missing but totals exist
+  const pt = toNum(u.prompt_tokens)     ?? toNum(u.promptTokens)     ?? 0;
+  const ct = toNum(u.completion_tokens) ?? toNum(u.completionTokens) ?? 0;
+  const kt = toNum(u.cached_tokens)     ?? toNum(u.cachedTokens)     ?? 0;
+  const totalTok = pt + ct + kt;
+
+  const totalCost = toNum(u.costUSD) ?? toNum(u.cost) ?? 0;
+
+  if (totalCost > 0 && totalTok > 0) {
+    return {
+      promptUSD:     totalCost * (pt / totalTok),
+      completionUSD: totalCost * (ct / totalTok),
+      cachedUSD:     totalCost * (kt / totalTok)
+    };
+  }
+  return null; // no info
+}
+
+
 function setSessionCookie(res, payload) {
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
   res.cookie(COOKIE_NAME, token, {
@@ -151,19 +191,45 @@ app.post('/api/portal/log', intakeLimiter, async (req, res) => {
       }
       case 'usage': {
         const u = req.body.usage || {};
+
+        // accept snake_case or camelCase
+        const pt = Number(u.prompt_tokens ?? u.promptTokens) || 0;
+        const ct = Number(u.completion_tokens ?? u.completionTokens) || 0;
+        const kt = Number(u.cached_tokens ?? u.cachedTokens) || 0;
+
+        // cost can be u.costUSD or u.cost
+        const incomingCost = toNum(u.costUSD ?? u.cost);
+
+        // Canonicalize breakdown keys, or derive split if only totals exist
+        const bd = canonicalizeBreakdownFromPayload({
+          breakdown: u.breakdown,
+          prompt_tokens: pt,
+          completion_tokens: ct,
+          cached_tokens: kt,
+          costUSD: incomingCost
+        });
+
+        // If cost missing but breakdown exists, sum it; else default 0
+        const costFinal =
+          incomingCost != null
+            ? incomingCost
+            : (bd ? (bd.promptUSD + bd.completionUSD + bd.cachedUSD) : 0);
+
         await prisma.usage.create({
           data: {
             tenantId: tenant.id,
             model: String(u.model || ''),
-            promptTokens: u.prompt_tokens || 0,
-            completionTokens: u.completion_tokens || 0,
-            cachedTokens: u.cached_tokens || 0,
-            cost: Number((u.costUSD ?? u.cost) || 0),
-            breakdown: u.breakdown ?? undefined
+            promptTokens: pt,
+            completionTokens: ct,
+            cachedTokens: kt,
+            cost: costFinal,
+            // Store the canonical breakdown if we have one, else null/undefined
+            breakdown: bd ?? undefined
           }
         });
         break;
       }
+
 
       case 'metric': {
         const { metricType = 'custom', value = 0 } = req.body;
@@ -430,16 +496,23 @@ app.get('/api/portal/metrics', async (req, res) => {
     requestsToday: requests,
     successRate,
     avgLatencyMs: avgLatency,
-    usage: lastUsage ? {
-      period: 'Current',
-      at: lastUsage.createdAt,
-      model: lastUsage.model,
+  usage: lastUsage ? {
+    period: 'Current',
+    at: lastUsage.createdAt,
+    model: lastUsage.model,
+    prompt_tokens: lastUsage.promptTokens,
+    completion_tokens: lastUsage.completionTokens,
+    cached_tokens: lastUsage.cachedTokens,
+    costUSD: lastUsage.cost,
+    breakdown: canonicalizeBreakdownFromPayload({
+      breakdown: lastUsage.breakdown,
       prompt_tokens: lastUsage.promptTokens,
       completion_tokens: lastUsage.completionTokens,
       cached_tokens: lastUsage.cachedTokens,
-      costUSD: lastUsage.cost,
-      breakdown: lastUsage.breakdown || {}
-    } : null
+      costUSD: lastUsage.cost
+    }) || undefined
+  } : null
+
   });
 });
 
@@ -484,7 +557,13 @@ app.get('/api/portal/usage', async (req, res) => {
       completion_tokens: current.completionTokens,
       cached_tokens: current.cachedTokens,
       costUSD: current.cost,
-      breakdown: current.breakdown || {}
+      breakdown: canonicalizeBreakdownFromPayload({
+        breakdown: current.breakdown,
+        prompt_tokens: current.promptTokens,
+        completion_tokens: current.completionTokens,
+        cached_tokens: current.cachedTokens,
+        costUSD: current.cost
+      }) || undefined
     } : null,
     history: history.map(u => ({
       at: u.createdAt,
@@ -494,8 +573,15 @@ app.get('/api/portal/usage', async (req, res) => {
       cached_tokens: u.cachedTokens,
       user: null,
       costUSD: u.cost,
-      breakdown: u.breakdown || {}
+      breakdown: canonicalizeBreakdownFromPayload({
+        breakdown: u.breakdown,
+        prompt_tokens: u.promptTokens,
+        completion_tokens: u.completionTokens, 
+        cached_tokens: u.cachedTokens,
+        costUSD: u.cost
+      }) || undefined
     }))
+
   });
 });
 
