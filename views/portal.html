@@ -248,27 +248,31 @@ const esc = s => String(s ?? '')
 
 let TENANT = "default"; // will be set after login
 
+
 // 👇 Session / auth UI helpers
 function show(view){
-  const login = $('login');
-  const dash  = $('dashboard');
-  const btn   = $('logoutBtn');
+  const login    = $('login');
+  const dash     = $('dashboard');
+  const btn      = $('logoutBtn');
+  const authwrap = $('authwrap');
 
-  if (view === 'dashboard') {
-    if (login) login.style.display = 'none';
-    if (dash)  dash.style.display  = '';
-    if (btn)   btn.style.display   = '';
-  } else {
-    if (dash)  dash.style.display  = 'none';
-    if (btn)   btn.style.display   = 'none';
-    if (login) login.style.display = '';
+  const authed = (view === 'dashboard');
+
+  // ✅ flip body class so CSS can hide the auth wrapper
+  document.body.classList.toggle('authed', authed);
+
+  // (optional: also set inline style for extra safety)
+  if (authwrap) authwrap.style.display = authed ? 'none' : '';
+
+  if (login) login.style.display = authed ? 'none' : '';
+  if (dash)  dash.style.display  = authed ? ''    : 'none';
+  if (btn)   btn.style.display   = authed ? ''    : 'none';
+
+  if (!authed) {
     setTimeout(() => $('email')?.focus(), 0);
-    const err = $('loginError');
-    if (err) err.textContent = '';
-    const pwd = $('password');           // 👈 fix here
-    if (pwd) pwd.value = '';
-    const form = $('loginForm');         // also safe
-    if (form) form.reset();
+    $('loginError')?.textContent = '';
+    $('password')?.value = '';
+    $('loginForm')?.reset();
   }
 }
 
