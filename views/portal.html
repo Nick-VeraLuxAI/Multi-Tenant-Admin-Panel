@@ -589,10 +589,14 @@ const fetchJSON = async (path) => {
     const m = mRes.ok && mRes.data ? mRes.data : {};
     const healthOK = !!(healthRes.ok && healthRes.data && healthRes.data.ok);
 
-    const statusText = (m.status || 'ok').toUpperCase();
+    const s = (m.status || 'idle').toLowerCase();
+    const statusText = s.toUpperCase();
     const statusClass =
-      statusText === 'OK' ? 'good' :
-      statusText === 'DEGRADED' ? 'warn' : 'bad';
+      s === 'ok'       ? 'good' :
+      s === 'degraded' ? 'warn'  :
+      s === 'idle'     ? 'warn'  : // idle = no recent traffic (not down)
+      'bad';
+
 
     $('kpi-status').textContent = mRes.status === 429 ? 'RATE LIMITED' : statusText;
     $('kpi-status').className = 'value ' + (mRes.status === 429 ? 'warn' : statusClass);
@@ -602,7 +606,11 @@ const fetchJSON = async (path) => {
       healthOK ? 'Healthy' : 'Unreachable';
 
     // ----- Top KPIs -----
-    $('kpi-req').textContent = m.requestsToday ?? 0;
+    $('kpi-req').textContent = m.requestsInWindow ?? 0;
+    // Update the label to reflect the window the server returned
+    const reqH3 = $('kpi-req')?.previousElementSibling;
+    if (reqH3) reqH3.textContent = `Requests (last ${m.windowMin ?? 30}m)`;
+
     $('kpi-sr').textContent  = ((m.successRate ?? 0)).toString() + '%';
     $('kpi-lat').textContent = ((m.avgLatencyMs ?? 0)).toString() + 'ms';
 
@@ -659,9 +667,9 @@ const fetchJSON = async (path) => {
     }
 
     // ----- Sparkline -----
-    const prev = window.__lastReqs || 0;
-    const now = m.requestsToday || 0;
-    series.push(Math.max(0, now - prev));
+    const prev = window.__lastReqs ?? 0;
+    const now = m.requestsInWindow ?? 0;
+    series.push(Math.max(0, now - prev)); // clip negatives if window slides
     series.shift();
     window.__lastReqs = now;
     drawSpark();
