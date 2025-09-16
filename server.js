@@ -12,6 +12,10 @@ const { encrypt, mask, hasKey } = require('./utils/kms'); // ← add this
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+// For uptime reporting
+const BOOT_TS = Date.now();
+
+
 const app = express();
 app.set('trust proxy', 1);
 
@@ -186,9 +190,16 @@ app.post('/api/portal/log', intakeLimiter, async (req, res) => {
       }
       case 'error': {
         const { user = 'unknown', message = '' } = req.body;
-        await prisma.event.create({ data: { tenantId: tenant.id, type: `error:${user}`, content: String(message) } });
+        await prisma.event.create({
+          data: { tenantId: tenant.id, type: `error:${user}`, content: String(message) }
+        });
+        // NEW: also count errors so status math has requests even when failing
+        await prisma.metric.create({
+          data: { tenantId: tenant.id, name: 'error', value: 1 }
+        });
         break;
       }
+
       case 'usage': {
         const u = req.body.usage || {};
 
@@ -464,57 +475,75 @@ app.put('/api/portal/tenant/secrets', requireAuth, async (req, res) => {
 
 /* -------------------------- Portal reads -------------------------- */
 
-// Summarized metrics (last 24h-ish)
+
+// Windowed status + uptime
 app.get('/api/portal/metrics', async (req, res) => {
   const tenantId = req.user.tenantId;
 
-  // Avg latency, success rate from metrics
+  // rolling window (minutes) – configurable via .env
+  const WINDOW_MIN = Number(process.env.METRICS_WINDOW_MIN || 30);
+  const since = new Date(Date.now() - WINDOW_MIN * 60 * 1000);
+
+  // Pull recent metrics only
   const metrics = await prisma.metric.findMany({
-    where: { tenantId },
+    where: { tenantId, createdAt: { gte: since } },
     orderBy: { createdAt: 'desc' },
-    take: 500
+    take: 2000
   });
 
-  const latencies = metrics.filter(m => m.name === 'latency').map(m => m.value);
-  const successCount = metrics.filter(m => m.name === 'success').length;
-  // crude requests count = success + events count; adjust to your definition
-  const eventsCount = await prisma.event.count({ where: { tenantId } });
-  const requests = Math.max(successCount, eventsCount);
+  // Derive counts
+  const latencies   = metrics.filter(m => m.name === 'latency').map(m => Number(m.value) || 0);
+  const successCnt  = metrics.filter(m => m.name === 'success').length;
+  const errorCnt    = metrics.filter(m => m.name === 'error').length;
+  const requests    = successCnt + errorCnt;
 
-  const avgLatency = latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0;
-  const successRate = requests ? Math.round((successCount / requests) * 1000) / 10 : 100;
+  const avgLatency = latencies.length
+    ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
+    : 0;
 
-  // Current usage = last usage row
+  // Status
+  let status, successRate = 100;
+  if (requests === 0) {
+    status = 'idle'; // no traffic in window = idle, not down
+  } else {
+    successRate = Math.round((successCnt / requests) * 1000) / 10; // e.g., 99.7
+    if (successRate >= 99 && avgLatency < 250) status = 'ok';
+    else if (successRate >= 95)                status = 'degraded';
+    else                                       status = 'down';
+  }
+
+  // Show last usage row (unchanged)
   const lastUsage = await prisma.usage.findFirst({
     where: { tenantId },
     orderBy: { createdAt: 'desc' }
   });
 
   res.json({
-    status: successRate >= 99 && avgLatency < 250 ? 'ok' : (successRate >= 95 ? 'degraded' : 'down'),
-    uptimeSec: null, // can be added via a DB-stored boot time if you need it
-    requestsToday: requests,
+    status,
+    uptimeSec: Math.floor((Date.now() - BOOT_TS) / 1000),
+    windowMin: WINDOW_MIN,
+    requestsInWindow: requests,
     successRate,
     avgLatencyMs: avgLatency,
-  usage: lastUsage ? {
-    period: 'Current',
-    at: lastUsage.createdAt,
-    model: lastUsage.model,
-    prompt_tokens: lastUsage.promptTokens,
-    completion_tokens: lastUsage.completionTokens,
-    cached_tokens: lastUsage.cachedTokens,
-    costUSD: lastUsage.cost,
-    breakdown: canonicalizeBreakdownFromPayload({
-      breakdown: lastUsage.breakdown,
+    usage: lastUsage ? {
+      period: 'Current',
+      at: lastUsage.createdAt,
+      model: lastUsage.model,
       prompt_tokens: lastUsage.promptTokens,
       completion_tokens: lastUsage.completionTokens,
       cached_tokens: lastUsage.cachedTokens,
-      costUSD: lastUsage.cost
-    }) || undefined
-  } : null
-
+      costUSD: lastUsage.cost,
+      breakdown: canonicalizeBreakdownFromPayload({
+        breakdown: lastUsage.breakdown,
+        prompt_tokens: lastUsage.promptTokens,
+        completion_tokens: lastUsage.completionTokens,
+        cached_tokens: lastUsage.cachedTokens,
+        costUSD: lastUsage.cost
+      }) || undefined
+    } : null
   });
 });
+
 
 // Events (latest first)
 app.get('/api/portal/events', async (req, res) => {
